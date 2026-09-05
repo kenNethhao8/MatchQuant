@@ -51,6 +51,7 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--baseline", type=Path, help="optional baseline canonical CSV")
     sync.add_argument("--processed-manifest", type=Path, help="optional baseline processed manifest")
     sync.add_argument("--current-pointer", type=Path, help="optional current pointer path")
+    sync.add_argument("--in-progress-season", help="explicitly allow an incomplete requested season, such as 2025-26")
     sync.add_argument("--timeout", type=float, default=30.0)
     return parser
 
@@ -185,6 +186,7 @@ def _epl_sync(args: argparse.Namespace) -> int:
         data_dir=args.data_dir,
         timeout=args.timeout,
         apply=args.apply,
+        in_progress_season=args.in_progress_season,
         staging_dir=args.staging_dir,
         baseline_path=args.baseline,
         processed_manifest_path=args.processed_manifest,
@@ -194,7 +196,8 @@ def _epl_sync(args: argparse.Namespace) -> int:
     counts = result["diff"]
     print(f"MatchQuant M2.1 EPL sync {result['status']}")
     print("source=Football-Data.co.uk competition=English Premier League division=E0")
-    print(f"mode={mode} seasons={','.join(result['requested_seasons'])} baseline={result['baseline']['version']}")
+    policy = result["in_progress_season"] or "none"
+    print(f"mode={mode} seasons={','.join(result['requested_seasons'])} baseline={result['baseline']['version']} in_progress_season={policy}")
     print(f"staging={result['staging_dir']}")
     print(f"added={counts['added']} unchanged={counts['unchanged']} revised={counts['revised']} missing={counts['missing_from_candidate']} skipped_unfinished={result['skipped_unfinished']}")
     print(f"quality_report={result['quality_report_path']}")

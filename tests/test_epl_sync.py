@@ -114,7 +114,7 @@ class EplSyncTests(unittest.TestCase):
                     ]
                 ),
             )
-            result = sync_epl(staging_dir=stage, data_dir=root)
+            result = sync_epl(staging_dir=stage, data_dir=root, in_progress_season="2025-26")
             self.assertEqual(result["status"], "dry-run")
             self.assertEqual(result["skipped_unfinished"], 1)
             self.assertEqual(result["diff"]["skipped_unfinished"], 1)
@@ -123,6 +123,48 @@ class EplSyncTests(unittest.TestCase):
             self.assertEqual(quality["seasons"][0]["skipped_unfinished"][0]["source_row"], 3)
             self.assertEqual(diff["details"]["skipped_unfinished"][0]["reason"], "both full-time score fields are empty")
             self.assertEqual(len(load_matches(result["candidate_path"])), 4)
+            self.assertFalse(result["strict_380_gate_applied_by_season"]["2025-26"])
+
+    def test_incomplete_historical_season_fails_without_declaration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_baseline(root)
+            stage = write_stage(root, source_frame([["01/08/2014", "Delta", "Epsilon", "1", "0"]]), season="2014-15")
+            with self.assertRaisesRegex(DataValidationError, "validation failed"):
+                sync_epl(staging_dir=stage, data_dir=root, apply=True)
+            quality = json.loads((stage / "reports" / "epl_quality_report.json").read_text(encoding="utf-8"))
+            season = quality["seasons"][0]
+            self.assertEqual(season["status"], "failed")
+            self.assertIn("incomplete_season", [error["kind"] for error in season["errors"]])
+            self.assertTrue(season["strict_380_gate_applied"])
+            self.assertEqual(quality["season_policy"]["2014-15"]["match_count_policy"], "strict_complete_season")
+            self.assertFalse((root / "processed" / "epl_current.json").exists())
+            self.assertFalse((root / "processed" / "versions").exists())
+
+    def test_incomplete_season_requires_explicit_in_progress_declaration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_baseline(root)
+            stage = write_stage(root, source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"]]))
+            with self.assertRaisesRegex(DataValidationError, "validation failed"):
+                sync_epl(staging_dir=stage, data_dir=root)
+            result = sync_epl(staging_dir=stage, data_dir=root, apply=True, in_progress_season="2025-26")
+            self.assertEqual(result["status"], "applied")
+            quality = json.loads(Path(result["quality_report_path"]).read_text(encoding="utf-8"))
+            policy = quality["season_policy"]["2025-26"]
+            self.assertEqual(policy["declared_in_progress_season"], "2025-26")
+            self.assertFalse(policy["strict_380_gate_applied"])
+            self.assertEqual(policy["match_count_policy"], "in_progress_exception")
+
+    def test_in_progress_declaration_must_be_requested(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_baseline(root)
+            stage = write_stage(root, source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"]]))
+            with self.assertRaisesRegex(ValueError, "must be one of requested seasons"):
+                sync_epl(staging_dir=stage, data_dir=root, in_progress_season="2024-25")
+            self.assertFalse((root / "processed" / "epl_current.json").exists())
+            self.assertFalse((root / "processed" / "versions").exists())
 
     def test_partial_score_fails_and_writes_quality_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -151,7 +193,7 @@ class EplSyncTests(unittest.TestCase):
                 ),
                 season="2015-16",
             )
-            result = sync_epl(staging_dir=stage, data_dir=root)
+            result = sync_epl(staging_dir=stage, data_dir=root, in_progress_season="2015-16")
             self.assertEqual(result["diff"], {"added": 1, "unchanged": 1, "revised": 1, "missing_from_candidate": 1, "skipped_unfinished": 0})
             revised = json.loads(Path(result["diff_report_path"]).read_text(encoding="utf-8"))["details"]["revised"][0]
             self.assertEqual(revised["changed_fields"], ["home_goals"])
@@ -165,7 +207,7 @@ class EplSyncTests(unittest.TestCase):
             canonical_path, _ = write_baseline(root)
             before = canonical_path.read_bytes()
             stage = write_stage(root, source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"]]))
-            result = sync_epl(staging_dir=stage, data_dir=root)
+            result = sync_epl(staging_dir=stage, data_dir=root, in_progress_season="2025-26")
             self.assertEqual(result["status"], "dry-run")
             self.assertEqual(canonical_path.read_bytes(), before)
             self.assertFalse((root / "processed" / "epl_current.json").exists())
@@ -176,7 +218,7 @@ class EplSyncTests(unittest.TestCase):
             canonical_path, _ = write_baseline(root)
             before = canonical_path.read_bytes()
             stage = write_stage(root, source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"]]))
-            result = sync_epl(staging_dir=stage, data_dir=root, apply=True)
+            result = sync_epl(staging_dir=stage, data_dir=root, apply=True, in_progress_season="2025-26")
             self.assertEqual(result["status"], "applied")
             version_dir = Path(result["version_dir"])
             pointer_path = Path(result["pointer_path"])
@@ -199,7 +241,7 @@ class EplSyncTests(unittest.TestCase):
                 source_frame([["01/08/2015", "Alpha", "Beta", "3", "0"]]),
                 season="2015-16",
             )
-            result = sync_epl(staging_dir=stage, data_dir=root, apply=True)
+            result = sync_epl(staging_dir=stage, data_dir=root, apply=True, in_progress_season="2015-16")
             self.assertEqual(result["status"], "blocked")
             self.assertEqual(set(result["apply_blockers"]), {"revised", "missing_from_candidate"})
             self.assertEqual(json.loads(Path(result["diff_report_path"]).read_text(encoding="utf-8"))["apply"]["status"], "blocked_manual_review")
@@ -234,7 +276,7 @@ class EplSyncTests(unittest.TestCase):
             legacy_bytes = legacy_path.read_bytes()
             body = source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"], ["02/08/2025", "Epsilon", "Zeta", "", ""]]).to_csv(index=False).encode("utf-8")
             with patch("matchquant.epl_sync_source.urllib.request.urlopen", return_value=FakeResponse(body)) as mocked:
-                result = sync_epl(seasons=["2025-26"], data_dir=root, timeout=5)
+                result = sync_epl(seasons=["2025-26"], data_dir=root, timeout=5, in_progress_season="2025-26")
             mocked.assert_called_once()
             staging = Path(result["staging_dir"])
             self.assertTrue(staging.parent.samefile(root / "staging"))
@@ -242,6 +284,9 @@ class EplSyncTests(unittest.TestCase):
             self.assertEqual((staging / "raw" / "E0_2025-26.csv").read_bytes(), body)
             self.assertEqual(legacy_path.read_bytes(), legacy_bytes)
             self.assertEqual(result["diff"]["skipped_unfinished"], 1)
+            source_manifest = json.loads((staging / "raw" / "source_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(source_manifest["declared_in_progress_season"], "2025-26")
+            self.assertFalse(source_manifest["season_policy"]["2025-26"]["strict_380_gate_applied"])
 
     def test_offline_cli_smoke(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -249,7 +294,7 @@ class EplSyncTests(unittest.TestCase):
             write_baseline(root)
             stage = write_stage(root, source_frame([["01/08/2025", "Delta", "Epsilon", "1", "0"]]))
             completed = subprocess.run(
-                [sys.executable, "-m", "matchquant", "epl-sync", "--staging-dir", str(stage), "--data-dir", str(root)],
+                [sys.executable, "-m", "matchquant", "epl-sync", "--staging-dir", str(stage), "--data-dir", str(root), "--in-progress-season", "2025-26"],
                 capture_output=True,
                 text=True,
                 check=False,

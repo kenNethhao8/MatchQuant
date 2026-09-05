@@ -45,7 +45,8 @@ def _source_error(report: dict[str, Any]) -> str:
     errors = report.get("errors", [])
     if errors:
         first = errors[0]
-        return f"{first.get('kind', 'invalid row')} at source row {first.get('source_row', '?')}"
+        location = f" at source row {first['source_row']}" if "source_row" in first else ""
+        return f"{first.get('kind', 'invalid row')}{location}"
     return "source contains invalid fields"
 
 
@@ -100,8 +101,27 @@ def _row_error(source: pd.DataFrame, mask: pd.Series, kind: str, message: str) -
     return [{"source_row": int(index) + 2, "kind": kind, "message": message} for index in source.index[mask]]
 
 
-def _analyse_source(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], pd.DataFrame | None]:
+def _normalise_in_progress_season(value: str | None) -> str | None:
+    return None if value is None else normalize_season(value)
+
+
+def _season_policy(season: str, in_progress_season: str | None) -> dict[str, Any]:
+    declared = _normalise_in_progress_season(in_progress_season)
+    if declared is not None and declared != season:
+        raise ValueError(f"in-progress season {declared} must match requested season {season}")
+    is_in_progress = declared == season
+    return {
+        "in_progress_season": declared,
+        "declared_in_progress_season": declared,
+        "season_is_declared_in_progress": is_in_progress,
+        "strict_380_gate_applied": not is_in_progress,
+        "match_count_policy": "in_progress_exception" if is_in_progress else "strict_complete_season",
+    }
+
+
+def _analyse_source(source: pd.DataFrame, season: str, in_progress_season: str | None = None) -> tuple[dict[str, Any], pd.DataFrame | None]:
     normalized = normalize_season(season)
+    policy = _season_policy(normalized, in_progress_season)
     source = source.reset_index(drop=True)
     report: dict[str, Any] = {
         "season": normalized,
@@ -122,7 +142,7 @@ def _analyse_source(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], 
         "invalid_team_rows": 0,
         "expected_matches": 380,
         "meets_expected_matches": False,
-        "strict_380_gate_applied": False,
+        **policy,
         "errors": [],
         "warnings": [],
         "status": "failed",
@@ -185,7 +205,6 @@ def _analyse_source(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], 
     errors.extend(_row_error(source, invalid_numeric_score & ~partial_score, "invalid_score", "score must be a finite non-negative integer"))
     errors.extend(_row_error(source, duplicate_id, "duplicate_match_id", "season and home/away teams produce a duplicate match_id"))
     errors.extend(_row_error(source, duplicate_fixture, "duplicate_fixture", "date and home/away teams duplicate a fixture"))
-    report["errors"] = errors
     valid_completed = structural & ~invalid_score & ~duplicate_id & ~duplicate_fixture & ~unfinished
     report["completed_match_count"] = int(valid_completed.sum())
     report["match_count"] = report["completed_match_count"]
@@ -199,7 +218,17 @@ def _analyse_source(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], 
     if report["skipped_unfinished_count"]:
         report["warnings"].append(f"{report['skipped_unfinished_count']} unfinished fixture(s) were excluded")
     if not report["meets_expected_matches"]:
-        report["warnings"].append(f"completed match count {report['completed_match_count']} is below the 380-match full-season expectation")
+        report["warnings"].append(f"completed match count {report['completed_match_count']} does not equal the 380-match full-season expectation")
+        if report["strict_380_gate_applied"]:
+            errors.append(
+                {
+                    "kind": "incomplete_season",
+                    "message": "requested season must contain exactly 380 completed matches unless it is explicitly declared in-progress",
+                    "completed_match_count": report["completed_match_count"],
+                    "expected_matches": report["expected_matches"],
+                }
+            )
+    report["errors"] = errors
     report["status"] = "failed" if errors else ("warning" if report["warnings"] else "ok")
     if errors:
         return report, None
@@ -219,14 +248,14 @@ def _analyse_source(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], 
     return report, validate_matches(canonical).loc[:, CANONICAL_COLUMNS].copy()
 
 
-def audit_sync_source_frame(source: pd.DataFrame, season: str) -> dict[str, Any]:
-    """Audit an in-progress source frame without applying the strict 380 gate."""
-    return _analyse_source(source, season)[0]
+def audit_sync_source_frame(source: pd.DataFrame, season: str, in_progress_season: str | None = None) -> dict[str, Any]:
+    """Audit one source frame, applying the strict 380 gate unless explicitly exempted."""
+    return _analyse_source(source, season, in_progress_season)[0]
 
 
-def convert_sync_source_frame(source: pd.DataFrame, season: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+def convert_sync_source_frame(source: pd.DataFrame, season: str, in_progress_season: str | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Convert completed rows and explicitly record unfinished rows."""
-    report, canonical = _analyse_source(source, season)
+    report, canonical = _analyse_source(source, season, in_progress_season)
     if report["status"] == "failed" or canonical is None:
         raise DataValidationError(f"invalid EPL sync source {report['season']}: {_source_error(report)}")
     return canonical, report
@@ -237,7 +266,9 @@ def _snapshot_id() -> str:
     return f"epl_sync_{stamp}_{uuid.uuid4().hex[:12]}"
 
 
-def _download_snapshot(seasons: tuple[str, ...], data_dir: Path, timeout: float) -> tuple[Path, dict[str, Any]]:
+def _download_snapshot(
+    seasons: tuple[str, ...], data_dir: Path, timeout: float, in_progress_season: str | None = None
+) -> tuple[Path, dict[str, Any]]:
     if timeout <= 0:
         raise ValueError("sync timeout must be positive")
     snapshot = data_dir / "staging" / _snapshot_id()
@@ -248,6 +279,7 @@ def _download_snapshot(seasons: tuple[str, ...], data_dir: Path, timeout: float)
         raw_path = raw_dir / raw_filename(season)
         entry: dict[str, Any] = {
             "season": season,
+            **_season_policy(season, in_progress_season),
             "url": source_url(season),
             "retrieved_at": _utc_now(),
             "raw_filename": raw_path.name,
@@ -274,7 +306,7 @@ def _download_snapshot(seasons: tuple[str, ...], data_dir: Path, timeout: float)
             raw_path.write_bytes(body)
             entry["sha256"] = file_sha256(raw_path)
             source = read_source_csv(raw_path)
-            report, _ = _analyse_source(source, season)
+            report, _ = _analyse_source(source, season, in_progress_season)
             entry.update(
                 row_count=int(len(source)),
                 data_cutoff=report["latest_date"],
@@ -303,6 +335,7 @@ def _download_snapshot(seasons: tuple[str, ...], data_dir: Path, timeout: float)
         "snapshot_id": snapshot.name,
         "generated_at": _utc_now(),
         "requested_seasons": list(seasons),
+        **_season_policy_manifest(seasons, in_progress_season),
         "source_urls": [entry["url"] for entry in entries],
         "data_cutoff": max((entry["data_cutoff"] for entry in entries if entry["data_cutoff"]), default=None),
         "status": "ok" if all(entry["download_status"] == "ok" and entry["parse_status"] == "ok" and entry["audit_status"] != "failed" for entry in entries) else "failed",
@@ -314,3 +347,11 @@ def _download_snapshot(seasons: tuple[str, ...], data_dir: Path, timeout: float)
     if failures:
         raise DataValidationError(f"EPL sync download failed for {', '.join(failures)}; staging: {snapshot}")
     return snapshot, manifest
+
+
+def _season_policy_manifest(seasons: tuple[str, ...], in_progress_season: str | None) -> dict[str, Any]:
+    return {
+        "in_progress_season": in_progress_season,
+        "declared_in_progress_season": in_progress_season,
+        "season_policy": {season: _season_policy(season, in_progress_season) for season in seasons},
+    }

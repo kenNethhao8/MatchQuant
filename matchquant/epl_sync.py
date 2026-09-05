@@ -56,6 +56,25 @@ def _season_cutoffs(frame: pd.DataFrame) -> dict[str, str | None]:
     return {str(season): _cutoff(part) for season, part in frame.groupby("season", sort=True)}
 
 
+def _season_policy_by_season(
+    selected: tuple[str, ...], reports: list[dict[str, Any]], in_progress_season: str | None
+) -> dict[str, dict[str, Any]]:
+    report_by_season = {str(report.get("season")): report for report in reports if report.get("season")}
+    return {
+        season: {
+            "in_progress_season": in_progress_season,
+            "declared_in_progress_season": in_progress_season,
+            "season_is_declared_in_progress": season == in_progress_season,
+            "strict_380_gate_applied": season != in_progress_season,
+            "match_count_policy": "in_progress_exception" if season == in_progress_season else "strict_complete_season",
+            "completed_match_count": report_by_season.get(season, {}).get("completed_match_count"),
+            "expected_matches": report_by_season.get(season, {}).get("expected_matches", 380),
+            "meets_expected_matches": report_by_season.get(season, {}).get("meets_expected_matches"),
+        }
+        for season in selected
+    }
+
+
 def _resolve_path(value: Any, base: Path) -> Path:
     if value is None or str(value).strip() == "":
         raise DataValidationError("current pointer is missing a required path")
@@ -105,9 +124,17 @@ def _load_baseline(
     }
 
 
-def _quality_report(snapshot: Path, manifest: dict[str, Any], selected: tuple[str, ...], reports: list[dict[str, Any]], errors: list[str]) -> dict[str, Any]:
+def _quality_report(
+    snapshot: Path,
+    manifest: dict[str, Any],
+    selected: tuple[str, ...],
+    reports: list[dict[str, Any]],
+    errors: list[str],
+    in_progress_season: str | None,
+) -> dict[str, Any]:
     warnings = [warning for report in reports for warning in report.get("warnings", [])]
     failed = bool(errors) or any(report.get("status") == "failed" for report in reports)
+    season_policy = _season_policy_by_season(selected, reports, in_progress_season)
     return {
         "schema_version": SYNC_QUALITY_REPORT_VERSION,
         "adapter_version": SYNC_ADAPTER_VERSION,
@@ -119,6 +146,10 @@ def _quality_report(snapshot: Path, manifest: dict[str, Any], selected: tuple[st
         "snapshot_id": manifest.get("snapshot_id", snapshot.name),
         "generated_at": _utc_now(),
         "requested_seasons": list(selected),
+        "in_progress_season": in_progress_season,
+        "declared_in_progress_season": in_progress_season,
+        "season_policy": season_policy,
+        "strict_380_gate_applied_by_season": {season: policy["strict_380_gate_applied"] for season, policy in season_policy.items()},
         "source_urls": [str(url) for url in (manifest.get("source_urls") or [entry.get("url") for entry in manifest.get("files", [])])],
         "data_cutoff": max((report["latest_date"] for report in reports if report.get("latest_date")), default=None),
         "status": "failed" if failed else ("warning" if warnings else "ok"),
@@ -140,6 +171,7 @@ def _write_stage_outputs(
     baseline_meta: dict[str, Any],
     selected: tuple[str, ...],
     apply_requested: bool,
+    in_progress_season: str | None,
 ) -> dict[str, Any]:
     manifest = _read_json(snapshot / "raw" / "source_manifest.json")
     entries = manifest.get("files")
@@ -177,7 +209,7 @@ def _write_stage_outputs(
             if not entry.get("sha256") or actual_hash != entry.get("sha256"):
                 raise DataValidationError(f"raw SHA-256 mismatch: manifest={entry.get('sha256')} actual={actual_hash}")
             source = read_source_csv(raw_path)
-            report, converted = _analyse_source(source, season)
+            report, converted = _analyse_source(source, season, in_progress_season)
             report.update(raw_filename=filename, source_url=entry.get("url"), retrieved_at=entry.get("retrieved_at"), raw_sha256=actual_hash)
             reports.append(report)
             if report["status"] == "failed" or converted is None:
@@ -189,7 +221,7 @@ def _write_stage_outputs(
                 report = {"season": season, "status": "failed", "errors": [{"kind": "source_error", "message": str(exc)}], "warnings": []}
             reports.append(report)
             errors.append(f"{season}: {exc}")
-    quality = _quality_report(snapshot, manifest, selected, reports, errors)
+    quality = _quality_report(snapshot, manifest, selected, reports, errors, in_progress_season)
     reports_dir, processed_dir = snapshot / "reports", snapshot / "processed"
     reports_dir.mkdir(exist_ok=True)
     processed_dir.mkdir(exist_ok=True)
@@ -232,6 +264,10 @@ def _write_stage_outputs(
         "source_urls": manifest.get("source_urls") or [entry.get("url") for entry in entries],
         "retrieved_at": [entry.get("retrieved_at") for entry in entries],
         "requested_seasons": list(selected),
+        "in_progress_season": in_progress_season,
+        "declared_in_progress_season": in_progress_season,
+        "season_policy": quality["season_policy"],
+        "strict_380_gate_applied_by_season": quality["strict_380_gate_applied_by_season"],
         "snapshot_id": manifest.get("snapshot_id", snapshot.name),
         "staging_dir": str(snapshot),
         "baseline": {"version": baseline_meta["version"], "canonical": baseline_meta["canonical_path"], "processed_manifest": baseline_meta["processed_manifest_path"], "canonical_sha256": baseline_meta["canonical_sha256"], "processed_manifest_sha256": baseline_meta["processed_manifest_sha256"], "data_cutoff": baseline_meta["data_cutoff"], "season_cutoffs": baseline_meta["season_cutoffs"]},
@@ -262,6 +298,10 @@ def _write_stage_outputs(
         "source_manifest_sha256": file_sha256(snapshot / "raw" / "source_manifest.json"),
         "generated_at": _utc_now(),
         "requested_seasons": list(selected),
+        "in_progress_season": in_progress_season,
+        "declared_in_progress_season": in_progress_season,
+        "season_policy": quality["season_policy"],
+        "strict_380_gate_applied_by_season": quality["strict_380_gate_applied_by_season"],
         "seasons": sorted(str(value) for value in candidate["season"].unique()),
         "data_cutoff": _cutoff(candidate),
         "inputs": [{"season": report["season"], "raw_filename": report.get("raw_filename"), "url": report.get("source_url"), "sha256": report.get("raw_sha256")} for report in reports],
@@ -315,6 +355,7 @@ def sync_epl(
     data_dir: str | Path = Path(r"D:\Codex\matchquant_data"),
     timeout: float = 30.0,
     apply: bool = False,
+    in_progress_season: str | None = None,
     staging_dir: str | Path | None = None,
     baseline_path: str | Path | None = None,
     processed_manifest_path: str | Path | None = None,
@@ -324,21 +365,26 @@ def sync_epl(
     root = Path(data_dir).expanduser().resolve()
     if staging_dir is None:
         selected = _season_list(seasons, ())
-        snapshot, _ = _download_snapshot(selected, root, timeout)
+        declared_in_progress = normalize_season(in_progress_season) if in_progress_season is not None else None
     else:
         snapshot = Path(staging_dir).expanduser().resolve()
         if not snapshot.is_dir():
             raise FileNotFoundError(f"sync staging directory does not exist: {snapshot}")
         manifest = _read_json(snapshot / "raw" / "source_manifest.json")
         selected = _season_list(seasons if seasons is not None else manifest.get("requested_seasons"), ())
+        declared_in_progress = normalize_season(in_progress_season) if in_progress_season is not None else None
+    if declared_in_progress is not None and declared_in_progress not in selected:
+        raise ValueError(f"in-progress season {declared_in_progress} must be one of requested seasons: {', '.join(selected)}")
+    if staging_dir is None:
+        snapshot, _ = _download_snapshot(selected, root, timeout, declared_in_progress)
     baseline, baseline_meta = _load_baseline(
         root,
         Path(baseline_path).expanduser().resolve() if baseline_path else None,
         Path(processed_manifest_path).expanduser().resolve() if processed_manifest_path else None,
         Path(current_pointer_path).expanduser().resolve() if current_pointer_path else None,
     )
-    outputs = _write_stage_outputs(snapshot, baseline, baseline_meta, selected, apply)
-    result: dict[str, Any] = {"status": "dry-run", "dry_run": not apply, "apply_requested": bool(apply), "snapshot_id": snapshot.name, "staging_dir": str(snapshot), "requested_seasons": list(selected), "baseline": baseline_meta, "candidate_path": str(outputs["candidate_path"]), "candidate_sha256": outputs["candidate_hash"], "quality_report_path": str(outputs["quality_path"]), "quality_report_sha256": outputs["quality_hash"], "diff_report_path": str(outputs["diff_path"]), "diff_report_sha256": outputs["diff_hash"], "processed_manifest_path": str(outputs["processed_path"]), "skipped_unfinished": outputs["quality"]["totals"]["skipped_unfinished_count"], "diff": outputs["diff"]["counts"]}
+    outputs = _write_stage_outputs(snapshot, baseline, baseline_meta, selected, apply, declared_in_progress)
+    result: dict[str, Any] = {"status": "dry-run", "dry_run": not apply, "apply_requested": bool(apply), "snapshot_id": snapshot.name, "staging_dir": str(snapshot), "requested_seasons": list(selected), "in_progress_season": declared_in_progress, "declared_in_progress_season": declared_in_progress, "strict_380_gate_applied_by_season": outputs["quality"]["strict_380_gate_applied_by_season"], "baseline": baseline_meta, "candidate_path": str(outputs["candidate_path"]), "candidate_sha256": outputs["candidate_hash"], "quality_report_path": str(outputs["quality_path"]), "quality_report_sha256": outputs["quality_hash"], "diff_report_path": str(outputs["diff_path"]), "diff_report_sha256": outputs["diff_hash"], "processed_manifest_path": str(outputs["processed_path"]), "skipped_unfinished": outputs["quality"]["totals"]["skipped_unfinished_count"], "diff": outputs["diff"]["counts"]}
     if apply and outputs["diff"]["apply"]["blockers"]:
         result["status"] = "blocked"
         result["apply_blockers"] = outputs["diff"]["apply"]["blockers"]

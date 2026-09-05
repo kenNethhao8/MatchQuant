@@ -82,7 +82,17 @@ python -m matchquant epl-sync `
   --data-dir D:\Codex\matchquant_data
 ```
 
-同步只对请求赛季替换/追加候选，未请求赛季从 active baseline 原样带入。进行中赛季允许少于 380 场已完成比赛；两项全场比分都为空的合法 fixture 会逐条记入 `skipped_unfinished`，而部分比分、坏日期、坏球队/比分、重复 fixture 或重复 `match_id` 会使同步失败。M2 `epl-prepare` 的完整赛季 380 场门槛不变。
+同步只对请求赛季替换/追加候选，未请求赛季从 active baseline 原样带入。默认每个请求赛季都必须有恰好 380 场已完成比赛；不根据日期推断赛季是否进行中。只有在请求列表中明确指定唯一的 `--in-progress-season YYYY-YY` 后，该赛季才允许少于 380 场，且两项全场比分都为空的合法 fixture 会逐条记入 `skipped_unfinished`：
+
+```powershell
+python -m matchquant epl-sync `
+  --seasons 2025-26 `
+  --in-progress-season 2025-26 `
+  --data-dir D:\Codex\matchquant_data `
+  --dry-run
+```
+
+`--in-progress-season` 必须是请求赛季之一；部分比分、坏日期、坏球队/比分、重复 fixture 或重复 `match_id` 始终会使同步失败。质量、差异和 processed manifest 会记录声明值、每赛季策略以及 `strict_380_gate_applied`。M2 `epl-prepare` 的完整赛季 380 场门槛不变。
 
 每次同步会在 staging 中留下 raw source manifest、候选 canonical、质量报告、差异报告和 processed manifest。差异报告包含 `added`、`unchanged`、`revised`、`missing_from_candidate`、`skipped_unfinished` 的数量和明细，并记录 baseline/candidate hash、来源 URL、抓取时间、数据 cutoff 和适配器版本。检测到 `revised` 或 `missing_from_candidate` 时，`--apply` 必须人工审查而被拒绝。
 
