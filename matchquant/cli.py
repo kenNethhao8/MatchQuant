@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1."""
+"""Command-line entry point for MatchQuant M1/M2."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pandas as pd
 
 from .backtest import run_models
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
+from .epl_sync import sync_epl
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .models import MODEL_NAMES
 from .schema import DataValidationError
@@ -39,6 +40,18 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--output", type=Path, help="canonical CSV path")
     prepare.add_argument("--quality-report", type=Path, help="quality JSON path")
     prepare.add_argument("--processed-manifest", type=Path, help="processed manifest JSON path")
+    sync = subparsers.add_parser("epl-sync", help="explicit EPL staging sync and offline diff")
+    sync_sources = sync.add_mutually_exclusive_group(required=True)
+    sync_sources.add_argument("--seasons", nargs="+", help="seasons to download, such as 2025-26")
+    sync_sources.add_argument("--staging-dir", type=Path, help="existing local staging snapshot; performs no network access")
+    sync_mode = sync.add_mutually_exclusive_group()
+    sync_mode.add_argument("--apply", action="store_true", help="activate only an addition-only candidate")
+    sync_mode.add_argument("--dry-run", action="store_true", help="compare without changing the active pointer (default)")
+    sync.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
+    sync.add_argument("--baseline", type=Path, help="optional baseline canonical CSV")
+    sync.add_argument("--processed-manifest", type=Path, help="optional baseline processed manifest")
+    sync.add_argument("--current-pointer", type=Path, help="optional current pointer path")
+    sync.add_argument("--timeout", type=float, default=30.0)
     return parser
 
 
@@ -166,6 +179,35 @@ def _epl_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _epl_sync(args: argparse.Namespace) -> int:
+    result = sync_epl(
+        seasons=args.seasons,
+        data_dir=args.data_dir,
+        timeout=args.timeout,
+        apply=args.apply,
+        staging_dir=args.staging_dir,
+        baseline_path=args.baseline,
+        processed_manifest_path=args.processed_manifest,
+        current_pointer_path=args.current_pointer,
+    )
+    mode = "apply" if result["apply_requested"] else "dry-run"
+    counts = result["diff"]
+    print(f"MatchQuant M2.1 EPL sync {result['status']}")
+    print("source=Football-Data.co.uk competition=English Premier League division=E0")
+    print(f"mode={mode} seasons={','.join(result['requested_seasons'])} baseline={result['baseline']['version']}")
+    print(f"staging={result['staging_dir']}")
+    print(f"added={counts['added']} unchanged={counts['unchanged']} revised={counts['revised']} missing={counts['missing_from_candidate']} skipped_unfinished={result['skipped_unfinished']}")
+    print(f"quality_report={result['quality_report_path']}")
+    print(f"diff_report={result['diff_report_path']}")
+    if result["status"] == "blocked":
+        print(f"apply_blocked={','.join(result['apply_blockers'])} manual_review_required=true")
+        return 2
+    print(f"processed_manifest={result['processed_manifest_path']}")
+    if result["status"] == "applied":
+        print(f"version={result['version_id']} pointer={result['pointer_path']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -176,6 +218,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":
             raise SystemExit(_epl_prepare(args))
+        if args.command == "epl-sync":
+            raise SystemExit(_epl_sync(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))

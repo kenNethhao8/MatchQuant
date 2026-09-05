@@ -26,6 +26,8 @@ MatchQuant is a local-first, reproducible research framework for football 1X2 pr
 - `matchquant run` must be offline-only and consume an explicit local input dataset.
 - Any network access must be triggered by an explicit data command. It must state the source, requested seasons, output location, and whether it will apply changes.
 - An eventual sync command must use a staging copy, compare canonical match IDs and source hashes, report additions/revisions/skipped unfinished fixtures, and apply changes only through an explicit apply action.
+- M2.1 `epl-sync` must default to dry-run, keep network snapshots under a new timestamped/unique `D:\Codex\matchquant_data\staging\` directory, preserve the initial M2 canonical/manifest, and atomically update only `processed\epl_current.json` after an addition-only apply passes hard validation.
+- M2.1 may exclude only rows with valid date/team fields and both full-time score fields empty; partial scores, invalid fields, duplicates, revisions, and missing baseline fixtures must remain explicit failures or apply blockers.
 - Do not claim the local data are current merely because a source is reachable. Report the local dataset cutoff and its version on every data-quality and backtest report.
 - Do not silently skip unavailable, malformed, incomplete, duplicate, or corrected source rows. Fail clearly or record the issue in the quality report.
 

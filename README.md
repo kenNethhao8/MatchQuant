@@ -63,6 +63,40 @@ python -m matchquant run `
 
 这是研究数据管线和基线回测，不是已校准的概率系统；真实数据回测结果不代表可用于博彩，也不构成投注建议。已知限制包括：源数据是比赛日级别而非完整开球时间、没有阵容/伤停/赔率校准层、数据源未来可能修订，且适配器不会猜测球队别名。
 
+## M2.1：显式增量同步与版本化
+
+`epl-sync` 是唯一新增的增量同步入口。默认是 dry-run；`run` 仍只读取显式本地 CSV，绝不会联网。网络同步必须明确给出赛季，并把原始文件写入 `D:\Codex\matchquant_data\staging\epl_sync_<UTC时间>_<唯一ID>\` 下的新快照：
+
+```powershell
+python -m matchquant epl-sync `
+  --seasons 2025-26 `
+  --data-dir D:\Codex\matchquant_data `
+  --dry-run
+```
+
+也可以用已有 staging 快照做完全离线的重算/审计：
+
+```powershell
+python -m matchquant epl-sync `
+  --staging-dir D:\Codex\matchquant_data\staging\epl_sync_<...> `
+  --data-dir D:\Codex\matchquant_data
+```
+
+同步只对请求赛季替换/追加候选，未请求赛季从 active baseline 原样带入。进行中赛季允许少于 380 场已完成比赛；两项全场比分都为空的合法 fixture 会逐条记入 `skipped_unfinished`，而部分比分、坏日期、坏球队/比分、重复 fixture 或重复 `match_id` 会使同步失败。M2 `epl-prepare` 的完整赛季 380 场门槛不变。
+
+每次同步会在 staging 中留下 raw source manifest、候选 canonical、质量报告、差异报告和 processed manifest。差异报告包含 `added`、`unchanged`、`revised`、`missing_from_candidate`、`skipped_unfinished` 的数量和明细，并记录 baseline/candidate hash、来源 URL、抓取时间、数据 cutoff 和适配器版本。检测到 `revised` 或 `missing_from_candidate` 时，`--apply` 必须人工审查而被拒绝。
+
+只有无修订、无缺失且所有硬校验通过时，才允许：
+
+```powershell
+python -m matchquant epl-sync `
+  --seasons 2025-26 `
+  --data-dir D:\Codex\matchquant_data `
+  --apply
+```
+
+成功 apply 会新建 `processed\versions\m2.1-<staging快照名>\`，保存 canonical、processed manifest、质量/差异报告，再原子更新 `processed\epl_current.json`。旧的 M2 `processed\epl_canonical.csv`、manifest、raw 快照和报告不会被覆盖；初始 M2 数据无需迁移。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。

@@ -11,6 +11,7 @@ from .epl import (
     source_url,
     stable_match_id,
 )
+from .epl_sync import audit_sync_source_frame, compare_canonical, convert_sync_source_frame, sync_epl
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
@@ -26,7 +27,10 @@ __all__ = [
     "REQUIRED_COLUMNS",
     "create_model",
     "audit_source_frame",
+    "audit_sync_source_frame",
+    "compare_canonical",
     "convert_source_frame",
+    "convert_sync_source_frame",
     "download_epl",
     "evaluate_predictions",
     "file_sha256",
@@ -37,6 +41,7 @@ __all__ = [
     "prepare_epl",
     "source_url",
     "stable_match_id",
+    "sync_epl",
     "validate_matches",
     "write_json",
     "write_predictions",
