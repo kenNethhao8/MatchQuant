@@ -1,0 +1,60 @@
+{
+  "schema_version": "m3-candidate-config-v1",
+  "description": "Small M3 grid over the existing M1 online models; no candidate changes the default model.",
+  "candidates": [
+    {
+      "name": "frequency_alpha_0_25",
+      "model": "frequency",
+      "config": {
+        "alpha": 0.25
+      }
+    },
+    {
+      "name": "frequency_alpha_1",
+      "model": "frequency",
+      "config": {
+        "alpha": 1.0
+      }
+    },
+    {
+      "name": "elo_k20_draw027",
+      "model": "elo",
+      "config": {
+        "k_factor": 20.0,
+        "home_advantage": 50.0,
+        "draw_base": 0.27
+      }
+    },
+    {
+      "name": "elo_k32_draw027",
+      "model": "elo",
+      "config": {
+        "k_factor": 32.0,
+        "home_advantage": 50.0,
+        "draw_base": 0.27
+      }
+    },
+    {
+      "name": "poisson_prior_weight_3",
+      "model": "poisson",
+      "config": {
+        "prior_home_goals": 1.5,
+        "prior_away_goals": 1.2,
+        "prior_weight": 3.0,
+        "max_goals": 10,
+        "tail_tolerance": 1e-12
+      }
+    },
+    {
+      "name": "poisson_prior_weight_6",
+      "model": "poisson",
+      "config": {
+        "prior_home_goals": 1.5,
+        "prior_away_goals": 1.2,
+        "prior_weight": 6.0,
+        "max_goals": 10,
+        "tail_tolerance": 1e-12
+      }
+    }
+  ]
+}

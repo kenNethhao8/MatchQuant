@@ -13,8 +13,12 @@ from .backtest import run_models
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .epl_sync import sync_epl
 from .io import file_sha256, load_matches, write_json, write_predictions
+from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
 from .schema import DataValidationError
+from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
+
+DEFAULT_M3_CANDIDATE_CONFIG = Path(__file__).resolve().parent.parent / "examples" / "m3_candidates.json"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,6 +32,28 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--model", choices=[*MODEL_NAMES, "all"], help="model or all three")
     run.add_argument("--season-mode", choices=["carry", "reset"], help="carry or reset online state across seasons")
     run.add_argument("--output-dir", type=Path, help="directory for predictions, metrics, and run config")
+    select = subparsers.add_parser("select", help="M3 strict chronological model selection and calibration diagnostics")
+    select.add_argument("--input", type=Path, required=True, help="local canonical match CSV")
+    select.add_argument("--candidate-config", "--candidates", type=Path, default=DEFAULT_M3_CANDIDATE_CONFIG)
+    select.add_argument(
+        "--validation-fold",
+        dest="validation_folds",
+        action="append",
+        required=True,
+        metavar="START..END",
+        help="repeat for chronological, non-overlapping validation periods",
+    )
+    select.add_argument(
+        "--final-test-start",
+        "--test-start",
+        dest="final_test_start",
+        required=True,
+        help="first final-test batch; final test is never used for selection",
+    )
+    select.add_argument("--final-test-end", "--test-end", dest="final_test_end")
+    select.add_argument("--season-mode", choices=["carry", "reset"], default="carry")
+    select.add_argument("--calibration-bins", type=int, default=10)
+    select.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"))
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
         "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
@@ -156,6 +182,118 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _select(args: argparse.Namespace) -> int:
+    input_path = args.input.expanduser().resolve()
+    candidate_path = args.candidate_config.expanduser().resolve()
+    matches = load_matches(input_path)
+    candidates, candidate_payload = load_candidates(candidate_path)
+    folds = parse_validation_folds(args.validation_folds)
+    result = run_nested_selection(
+        matches,
+        candidates,
+        folds,
+        args.final_test_start,
+        final_test_end=args.final_test_end,
+        season_mode=args.season_mode,
+        calibration_bins=args.calibration_bins,
+    )
+    run_dir = new_run_dir(args.output_root.expanduser().resolve())
+    input_hash = file_sha256(input_path)
+    candidate_hash = file_sha256(candidate_path)
+    provenance = dataset_provenance(input_path, matches)
+    selected = result["selected_candidate"]
+    final_run = result["final_run"]
+    predictions_path = write_predictions(final_run.predictions, run_dir / "predictions.csv")
+    calibration_path = run_dir / "calibration_reliability.csv"
+    result["calibration_table"].to_csv(calibration_path, index=False, encoding="utf-8")
+    validation_path = write_json(
+        {
+            "schema_version": "m3-validation-v1",
+            "input": str(input_path),
+            "input_sha256": input_hash,
+            "data_cutoff": provenance["data_cutoff"],
+            "data_version": provenance["dataset_version"],
+            "candidate_config": str(candidate_path),
+            "candidate_config_sha256": candidate_hash,
+            "validation_folds": result["validation_folds"],
+            "selection_rule": result["selection_rule"],
+            "candidates": result["candidates"],
+            "ranking": result["ranking"],
+            "selected_candidate": selected,
+        },
+        run_dir / "validation_metrics.json",
+    )
+    final_metrics_payload = {
+        "schema_version": "m3-final-metrics-v1",
+        "input": str(input_path),
+        "input_sha256": input_hash,
+        "data_cutoff": provenance["data_cutoff"],
+        "data_version": provenance["dataset_version"],
+        "data_provenance_status": provenance["status"],
+        "candidate": {
+            "candidate_name": selected["candidate_name"],
+            "candidate_order": selected["candidate_order"],
+            "model": selected["model"],
+            "config": selected["config"],
+            "configuration_sha256": selected["configuration_sha256"],
+        },
+        "test_boundary": result["final_test"],
+        "training_matches": int(final_run.training_matches),
+        "test_matches": int(final_run.test_matches),
+        "metrics": result["final_metrics"],
+        "calibration_status": "diagnostic_only_not_calibrated",
+        "calibration": {
+            **result["calibration_summary"],
+            "reliability_table": str(calibration_path),
+        },
+    }
+    final_metrics_path = write_json(final_metrics_payload, run_dir / "final_metrics.json")
+    run_config_path = run_dir / "run_config.json"
+    run_config = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "command": "matchquant select",
+        "generated_at": pd.Timestamp.utcnow().floor("s").isoformat().replace("+00:00", "Z"),
+        "input": str(input_path),
+        "input_sha256": input_hash,
+        "input_rows": int(len(matches)),
+        "data_cutoff": provenance["data_cutoff"],
+        "data_version": provenance["dataset_version"],
+        "data_provenance": provenance,
+        "candidate_config": {
+            "path": str(candidate_path),
+            "sha256": candidate_hash,
+            "payload": candidate_payload,
+        },
+        "season_mode": args.season_mode,
+        "validation_folds": result["validation_folds"],
+        "final_test": result["final_test"],
+        "selection_rule": result["selection_rule"],
+        "validation_metrics": result["candidates"],
+        "ranking": result["ranking"],
+        "selected_candidate": selected,
+        "final_test_metrics": final_metrics_payload["metrics"],
+        "calibration": final_metrics_payload["calibration"],
+        "outputs": {
+            "run_dir": str(run_dir),
+            "validation_metrics": str(validation_path),
+            "predictions": str(predictions_path),
+            "final_metrics": str(final_metrics_path),
+            "calibration_reliability": str(calibration_path),
+            "run_config": str(run_config_path),
+        },
+    }
+    config_path = write_json(run_config, run_config_path)
+    print("MatchQuant M3 selection complete")
+    print(f"selected={selected['candidate_name']} model={selected['model']} final_test_matches={final_run.test_matches}")
+    print(f"run_dir={run_dir}")
+    print(f"validation_metrics={validation_path}")
+    print(f"predictions={predictions_path}")
+    print(f"final_metrics={final_metrics_path}")
+    print(f"calibration_reliability={calibration_path}")
+    print(f"run_config={config_path}")
+    return 0
+
+
 def _epl_download(args: argparse.Namespace) -> int:
     manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
     print("MatchQuant M2 EPL download complete")
@@ -217,6 +355,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if args.command == "run":
             raise SystemExit(_run(args))
+        if args.command == "select":
+            raise SystemExit(_select(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

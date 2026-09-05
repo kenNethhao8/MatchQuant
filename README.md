@@ -107,6 +107,26 @@ python -m matchquant epl-sync `
 
 成功 apply 会新建 `processed\versions\m2.1-<staging快照名>\`，保存 canonical、processed manifest、质量/差异报告，再原子更新 `processed\epl_current.json`。旧的 M2 `processed\epl_canonical.csv`、manifest、raw 快照和报告不会被覆盖；初始 M2 数据无需迁移。
 
+## M3：严格时序模型选择与概率校准诊断
+
+M3 的 `select` 命令只读取显式给出的本地 canonical CSV、仓库内候选配置和相邻的可选 processed manifest，不联网、不调用 `epl-sync`，也不会修改 `D:\Codex\matchquant_data\`。默认输出为 `D:\Codex\matchquant_runs\m3_select_<UTC时间>_<唯一ID>\`。
+
+候选配置位于 [`examples/m3_candidates.json`](examples/m3_candidates.json)，枚举 M1 已有的 Frequency、Elo、Poisson 及其少量参数组合；它不会改变 `run` 命令的默认模型或参数。示例：
+
+```powershell
+python -m matchquant select `
+  --input D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --candidate-config examples\m3_candidates.json `
+  --validation-fold 2022-08-01..2023-07-31 `
+  --validation-fold 2023-08-01..2024-07-31 `
+  --final-test-start 2024-08-01 `
+  --final-test-end 2025-06-01
+```
+
+每个 validation fold 都从该 fold 起点之前的历史重新按时间回放，保留同日/同时间批次先预测后更新；fold 必须按时间排列、不重叠，并在 final-test 起点前结束。候选按所有 validation 比赛的 pooled 平均 multiclass log loss 排名，Brier 只作次级 tie-break，最后用候选名的稳定字典序、再用配置顺序解决并列。选中候选之后只对 final-test 做一次回放；final-test 指标不会参与选择。日期形式的 fold 端点遵循 M1 的日历日批次语义。
+
+每次 M3 run 保存 `run_config.json`（输入 CSV SHA-256、候选配置 hash、manifest/cutoff 状态、边界、全部候选指标、选择规则、最终指标和输出路径）、`validation_metrics.json`、选中候选的 `predictions.csv`、`final_metrics.json` 和 `calibration_reliability.csv`。后者为 home/draw/away 各自的固定等宽分桶表，并报告 multiclass ECE；空桶保留为零计数的有限值行以保持稳定表形。ECE 和 reliability 是诊断，不代表概率已经校准；现有 log loss/Brier/accuracy 仍保留。若相邻 manifest 缺少 `dataset_version`，run 会明确记录缺失，而不会伪造版本号。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -155,4 +175,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2 仅增加显式触发的 EPL 历史 CSV 下载、离线适配和质量审计；项目仍不包含网页、数据库、实时预测、因子引擎或机器学习模型，输入数据质量和概率校准也不等于博彩可用性。
+M2/M2.1/M3 仍不包含网页、数据库、实时预测、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测与校准诊断不等于未来表现、盈利、投注价值或投注建议。
