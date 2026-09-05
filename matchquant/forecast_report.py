@@ -32,7 +32,20 @@ def write_forecast_report(run: Any, config: Mapping[str, Any], path: Path) -> Pa
         f"- 实际纳入历史：{run.history_rows_used}/{run.history_rows_total} 场；纳入历史 cutoff：`{run.history_cutoff or '无，冷启动'}`",
         f"- 模型：`{run.model_name}`；season mode：`{run.season_mode}`",
         f"- 选择证据状态：`{selection['evidence_status']}`",
+        f"- 选择 as-of 证据：`{selection.get('selection_as_of_status', 'not_applicable')}`",
     ]
+    latest_end = selection.get("validation_latest_end")
+    if isinstance(latest_end, Mapping):
+        lines.append(
+            f"- M3 验证期最新结束边界：`{_markdown_text(latest_end.get('value'))}`；"
+            f"有效结束边界：`{_markdown_text(latest_end.get('effective_end_exclusive'))}`"
+        )
+    as_of_evidence = selection.get("as_of_evidence")
+    if isinstance(as_of_evidence, Mapping) and as_of_evidence.get("status") == "validated":
+        lines.append(
+            "- M3 final-test metrics 明确未用于选模；因此 final-test 可以位于本次 as-of 之后，"
+            "仅作审计留痕。"
+        )
     if selection.get("history_hash_status") == "mismatch":
         lines.extend(
             [

@@ -159,7 +159,7 @@ python -m matchquant forecast `
   --selection-run-config D:\Codex\matchquant_runs\m3_select_<...>\run_config.json
 ```
 
-两种模型选择方式互斥；M4 不设置新的隐式模型。若 M3 run 的 history SHA-256 与本次 `--history` 不一致，命令仍可在明确请求下运行，但 `run_config.json` 和 `forecast_report.md` 会标记 `history_hash_mismatch`，不得把该选择证据理解为本次历史的匹配训练证据。结构无效、候选缺失、模型配置无效或 hash 字段不合法会直接失败。
+两种模型选择方式互斥；M4 不设置新的隐式模型。选择 M3 run 时，M4 还会严格检查 `validation_folds`、`selection_rule` 和 `final_test` 边界：至少要有一个有效 validation fold，且每个 fold 的有效结束边界必须不晚于本次 `--as-of`。date-only 的 fold 结束日按整日结果处理，因此 date-only `--as-of` 不会把同日结果视为已知；精确时间 `--as-of` 遇到同日 date-only fold 结束边界会因时刻歧义直接拒绝。`selection_rule.final_test_metrics_used_for_selection` 必须明确为 `false`；M3 final-test 可以在 `--as-of` 之后存在，因为它不参与候选选择，但这一点会写入 `run_config.json` 和 `forecast_report.md`。若 M3 run 的 history SHA-256 与本次 `--history` 不一致，命令仍可在明确请求下运行，但会标记 `history_hash_mismatch`，不得把该选择证据理解为本次 history 的匹配训练证据。结构无效、验证期越过 as-of、候选缺失、模型配置无效或 hash 字段不合法会直接失败。
 
 `--as-of` 是预测快照边界：日期形式（如 `2024-01-07`）排除该日及之后的所有历史结果；精确时间形式只纳入严格早于该时间批次的历史结果。同一精确时间戳先作为一个批次处理；如果边界所在日混有 date-only 记录，精确时间边界会被拒绝，避免把未知时刻误当成已知时刻。所有 fixture 必须不早于 `as-of`；一次 forecast 只用 as-of 之前的历史更新模型，任何待赛 fixture 都不会更新模型状态。
 
@@ -167,7 +167,7 @@ python -m matchquant forecast `
 
 - `predictions.csv`：fixture 信息、H/D/A 概率、`model_most_likely_result`（仅表示“模型最可能结果”）及 Poisson 模型的期望进球字段；不含未来真实比分；
 - `forecast_report.md`：中文快照说明、输入证据、逐 fixture 结果、限制与免责声明；
-- `run_config.json`：历史/fixture/选择配置的路径和 SHA-256、as-of、实际历史 cutoff/行数、模型配置、选择证据状态、输出路径和免责声明。
+- `run_config.json`：历史/fixture/选择配置的路径和 SHA-256、as-of、实际历史 cutoff/行数、模型配置、选择证据状态、selection as-of 状态、M3 验证期最新结束边界、final-test 未参与选模的说明、输出路径和免责声明。
 
 M4 输出是本地研究快照，不是当前实时赛程预测。概率经过有限、非负、和为 1 的合法性检查，但没有因此声明已经校准；没有外部赔率、阵容/伤停/新闻、机器学习、实时服务、数据库或自动调度，也不构成投注建议、盈利承诺或未来表现保证。若需要真实历史时点 replay，应在 `D:\Codex\matchquant_runs\` 临时生成无比分 fixture 输入，并在记录中明确 as-of 和输入 hash；它仍不是当前实时赛程预测。
 

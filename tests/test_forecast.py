@@ -8,7 +8,7 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 
 from matchquant.fixtures import validate_fixtures
-from matchquant.forecast import forecast_fixtures, run_forecast
+from matchquant.forecast import forecast_fixtures, load_selection_run_config, run_forecast
 from matchquant.io import file_sha256, load_matches, write_json
 from matchquant.models import FrequencyModel
 from matchquant.schema import DataValidationError
@@ -21,6 +21,32 @@ class ForecastTests(unittest.TestCase):
         cls.fixtures_path = Path("examples/synthetic_fixtures.csv").resolve()
         cls.history = load_matches(cls.history_path)
         cls.fixtures = validate_fixtures(pd.read_csv(cls.fixtures_path, dtype="string"))
+
+    def _selection_payload(self, input_sha256=None):
+        config = {"alpha": 1.0}
+        candidate_hash = hashlib.sha256(
+            json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "schema_version": "m3-selection-v1",
+            "input_sha256": input_sha256 or file_sha256(self.history_path),
+            "season_mode": "carry",
+            "validation_folds": [
+                {"fold_id": "validation_1", "start": "2024-01-03", "end": "2024-01-05"},
+                {"fold_id": "validation_2", "start": "2024-01-06", "end": "2024-01-06"},
+            ],
+            "final_test": {"start": "2024-01-07", "end": "2024-01-10"},
+            "selection_rule": {
+                "primary": "validation pooled average multiclass log loss",
+                "final_test_metrics_used_for_selection": False,
+            },
+            "selected_candidate": {
+                "candidate_name": "frequency_alpha_1",
+                "model": "frequency",
+                "config": config,
+                "configuration_sha256": candidate_hash,
+            },
+        }
 
     def test_date_only_as_of_excludes_same_day_and_future_score_changes(self):
         altered = self.history.copy()
@@ -99,23 +125,10 @@ class ForecastTests(unittest.TestCase):
             self.assertTrue((probabilities.sum(axis=1).sub(1).abs() < 1e-8).all())
 
     def test_selection_run_config_is_extracted_and_hash_mismatch_is_marked(self):
-        candidate_hash = hashlib.sha256(
-            json.dumps({"alpha": 1.0}, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             selection_path = root / "m3" / "run_config.json"
-            matched = {
-                "schema_version": "m3-selection-v1",
-                "input_sha256": file_sha256(self.history_path),
-                "season_mode": "carry",
-                "selected_candidate": {
-                    "candidate_name": "frequency_alpha_1",
-                    "model": "frequency",
-                    "config": {"alpha": 1.0},
-                    "configuration_sha256": candidate_hash,
-                },
-            }
+            matched = self._selection_payload()
             write_json(matched, selection_path)
             result = run_forecast(
                 self.history_path,
@@ -140,6 +153,82 @@ class ForecastTests(unittest.TestCase):
             payload = json.loads(Path(mismatch_result["run_config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["selection"]["history_hash_status"], "mismatch")
             self.assertIn("history hash", Path(mismatch_result["forecast_report_path"]).read_text(encoding="utf-8"))
+
+    def test_matching_history_cannot_hide_validation_fold_after_as_of(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = self._selection_payload()
+            payload["validation_folds"][1]["end"] = "2024-01-07"
+            payload["final_test"]["start"] = "2024-01-08"
+            selection_path = root / "late-validation.json"
+            write_json(payload, selection_path)
+            with self.assertRaisesRegex(DataValidationError, "ends after as_of"):
+                run_forecast(
+                    self.history_path,
+                    self.fixtures_path,
+                    "2024-01-07",
+                    selection_run_config_path=selection_path,
+                    output_root=root / "runs",
+                )
+
+    def test_exact_time_selection_boundary_is_safe_at_validation_batch_end(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            history_path = root / "history.csv"
+            fixtures_path = root / "fixtures.csv"
+            pd.DataFrame(
+                [
+                    ["h1", "2024-01-07T09:00:00", "S1", "A", "B", 1, 0],
+                    ["h2", "2024-01-07T10:00:00", "S1", "C", "D", 0, 1],
+                ],
+                columns=["match_id", "date", "season", "home_team", "away_team", "home_goals", "away_goals"],
+            ).to_csv(history_path, index=False)
+            pd.DataFrame(
+                [["f1", "2024-01-07T10:00:00", "S1", "A", "C"]],
+                columns=["fixture_id", "date", "season", "home_team", "away_team"],
+            ).to_csv(fixtures_path, index=False)
+            payload = self._selection_payload(file_sha256(history_path))
+            payload["validation_folds"] = [
+                {
+                    "fold_id": "validation_1",
+                    "start": "2024-01-07T09:00:00",
+                    "end": "2024-01-07T10:00:00",
+                }
+            ]
+            payload["final_test"] = {
+                "start": "2024-01-07T10:00:00",
+                "end": "2024-01-08T10:00:00",
+            }
+            selection_path = root / "safe-selection.json"
+            write_json(payload, selection_path)
+            result = run_forecast(
+                history_path,
+                fixtures_path,
+                "2024-01-07T10:00:00",
+                selection_run_config_path=selection_path,
+                output_root=root / "runs",
+            )
+            self.assertEqual(result["selection_evidence_status"], "matched")
+            self.assertEqual(result["selection_as_of_status"], "validated")
+            self.assertEqual(
+                result["config"]["selection"]["validation_latest_end"]["value"],
+                "2024-01-07T10:00:00",
+            )
+            self.assertEqual(result["run"].history_rows_used, 1)
+
+    def test_exact_time_as_of_rejects_same_day_date_only_validation_end(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._selection_payload()
+            payload["validation_folds"][1]["end"] = "2024-01-07"
+            payload["final_test"]["start"] = "2024-01-08"
+            selection_path = Path(temporary) / "ambiguous-validation.json"
+            write_json(payload, selection_path)
+            with self.assertRaisesRegex(DataValidationError, "ambiguous date-only"):
+                load_selection_run_config(
+                    selection_path,
+                    file_sha256(self.history_path),
+                    "2024-01-07T12:00:00",
+                )
 
     def test_selection_and_explicit_model_modes_are_mutually_exclusive(self):
         with tempfile.TemporaryDirectory() as temporary:

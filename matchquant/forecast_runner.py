@@ -52,7 +52,9 @@ def run_forecast(
     history = load_matches(history_file)
     fixtures = load_fixtures(fixtures_file)
     if selection_run_config_path is not None:
-        model, config, selection = load_selection_run_config(selection_run_config_path, history_hash)
+        model, config, selection = load_selection_run_config(
+            selection_run_config_path, history_hash, as_of
+        )
         selected_season_mode = selection.get("selection_season_mode")
         evidence_path = Path(selection["path"])
         evidence_config_hash = selection["sha256"]
@@ -73,6 +75,14 @@ def run_forecast(
             "history_hash_matches": None,
             "history_hash_status": "not_applicable",
             "evidence_status": "explicit_model_config",
+            "selection_as_of_status": "not_applicable",
+            "as_of_evidence": {
+                "status": "not_applicable",
+                "reason": "explicit model configuration; no M3 candidate selection was used",
+            },
+            "validation_latest_end": None,
+            "selection_rule": None,
+            "final_test": None,
             "selected_candidate": None,
             "selection_season_mode": None,
         }
@@ -118,6 +128,9 @@ def run_forecast(
         "season_mode": run.season_mode,
         "selection": selection,
         "selection_evidence_status": selection["evidence_status"],
+        "selection_as_of_status": selection["selection_as_of_status"],
+        "selection_validation_latest_end": selection.get("validation_latest_end"),
+        "selection_as_of_evidence": selection.get("as_of_evidence"),
         "validation": {
             "all_fixture_dates_at_or_after_as_of": True,
             "fixture_results_used_for_model_updates": False,
@@ -144,6 +157,7 @@ def run_forecast(
         "history_sha256": history_hash,
         "fixtures_sha256": fixtures_hash,
         "selection_evidence_status": selection["evidence_status"],
+        "selection_as_of_status": selection["selection_as_of_status"],
         "evidence_config_path": str(evidence_path),
         "evidence_config_sha256": evidence_config_hash,
     }

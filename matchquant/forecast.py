@@ -21,6 +21,7 @@ from .models import MODEL_NAMES, RESULTS, create_model
 from .schema import DataValidationError, validate_matches
 from .selection import SELECTION_SCHEMA_VERSION
 from .forecast_report import DISCLAIMER
+from .forecast_selection import validate_selection_as_of
 
 FORECAST_SCHEMA_VERSION = "m4-forecast-v1"
 FORECAST_PREDICTION_COLUMNS = (
@@ -70,7 +71,11 @@ def _valid_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
 
 
-def load_selection_run_config(path: str | Path, history_sha256: str) -> tuple[str, dict[str, Any], dict[str, object]]:
+def load_selection_run_config(
+    path: str | Path,
+    history_sha256: str,
+    as_of: str | pd.Timestamp,
+) -> tuple[str, dict[str, Any], dict[str, object]]:
     """Extract and validate the selected M3 candidate from one run config."""
 
     selection_path = Path(path).expanduser().resolve()
@@ -103,6 +108,7 @@ def load_selection_run_config(path: str | Path, history_sha256: str) -> tuple[st
     computed_candidate_hash = _configuration_hash(config)
     if candidate_hash is not None and candidate_hash != computed_candidate_hash:
         raise DataValidationError("selected candidate configuration_sha256 does not match config")
+    as_of_evidence = validate_selection_as_of(payload, as_of)
     history_match = str(selection_hash).lower() == history_sha256.lower()
     evidence = {
         "mode": "m3_run_config",
@@ -122,6 +128,7 @@ def load_selection_run_config(path: str | Path, history_sha256: str) -> tuple[st
         },
         "selection_season_mode": payload.get("season_mode"),
     }
+    evidence.update(as_of_evidence)
     return model, dict(config), evidence
 
 def load_model_config(path: str | Path, model: str) -> dict[str, Any]:
