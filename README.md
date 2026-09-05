@@ -188,8 +188,8 @@ M5 只接受用户明确传入的本地 Football-Data.co.uk `E0` 兼容 CSV。�
      --data-root D:\Codex\matchquant_data
    ```
 
-   每次调用都会在 `D:\Codex\matchquant_data\fixtures\snapshots\` 新建唯一目录，复制原始 bytes、计算 SHA-256，并保存 manifest、质量报告和（仅当有合法 pending 行时）`processed\epl_fixtures.csv`。snapshot 记录输入路径、赛季、日期范围、数据 cutoff、行分类和版本；raw copy 是只读快照且不被覆盖。两个比分均为空才是 pending；两个比分均有效的 completed 行只进入质量证据。部分比分、坏日期/球队/比分、重复 stable fixture ID 和同 fixture 冲突会失败且不产生 fixture canonical。没有 pending 时状态为 `no_pending_fixtures`，只留证据，也不生成空 CSV。
-3. 如果需要版本观察，可额外传入 `--baseline-fixtures`。M5 只按 `fixture_id` 报告 `added`、`unchanged`、`revised`、`missing_from_candidate`；baseline 缺失可能是已完成、取消或源缺失，报告会要求人工判断。M5 不删除 baseline、不 apply、不更新指针。
+   每次调用都会在 `D:\Codex\matchquant_data\fixtures\snapshots\` 新建唯一目录，复制原始 bytes、计算 SHA-256，并保存 manifest、质量报告和（仅当有合法 pending 行时）`processed\epl_fixtures.csv`。snapshot 记录输入路径、赛季、全源有效日期范围、completed 结果日期范围、pending 日期范围、completed-data cutoff、行分类和版本；raw copy 是只读快照且不被覆盖。`data_cutoff` 只表示 completed 结果的最新日期，不会把未来 pending 日期当作数据 cutoff。两个比分均为空才是 pending；两个比分均有效的 completed 行只进入质量证据。部分比分、坏日期/球队/比分、重复 stable fixture ID 和同 fixture 冲突会失败且不产生 fixture canonical。没有 pending 时状态为 `no_pending_fixtures`，只留证据，也不生成空 CSV。
+3. 如果需要版本观察，可额外传入 `--baseline-fixtures`。M5 只按 `fixture_id` 报告 `added`、`unchanged`、`revised`、`missing_from_candidate`；stable ID 包含赛季和清理后的主/客队文本，因此源队名文本变化通常表现为 `added` + `missing_from_candidate`，并要求人工判断；只有 ID 实际保持不变时才报告 `revised`。M5 不做模糊别名、不删除 baseline、不 apply、不更新指针。
 4. 人工明确选择 history、M3 selection evidence 或显式 model config，以及本次 `as-of`。然后把 M5 生成的 `processed\epl_fixtures.csv` 作为 M4 的 `--fixtures`：
 
    ```powershell

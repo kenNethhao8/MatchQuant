@@ -76,7 +76,13 @@ def _report_template(season: str | None, source_rows: int = 0) -> dict[str, Any]
         "status": "failed",
         "source_date_format": None,
         "date_range": {"earliest": None, "latest": None},
+        "source_date_range": {"earliest": None, "latest": None},
+        "completed_date_range": {"earliest": None, "latest": None},
+        "pending_date_range": {"earliest": None, "latest": None},
+        "completed_data_cutoff": None,
+        "completed_data_cutoff_status": "missing_no_completed_results",
         "data_cutoff": None,
+        "data_cutoff_status": "missing_no_completed_results",
         "counts": counts,
         **counts,
         "invalid_row_details": [],
@@ -101,6 +107,14 @@ def _set_counts(report: dict[str, Any], **values: int) -> None:
         report[key] = int(value)
 
 
+def _date_range(values: list[str]) -> dict[str, str | None]:
+    ordered = sorted(value for value in values if value)
+    return {
+        "earliest": ordered[0] if ordered else None,
+        "latest": ordered[-1] if ordered else None,
+    }
+
+
 def _analyse(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     if not isinstance(source, pd.DataFrame):
         raise TypeError("source must be a pandas DataFrame")
@@ -119,12 +133,9 @@ def _analyse(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], list[di
     dates, date_format = _parse_dates(source["Date"])
     report["source_date_format"] = date_format
     valid_dates = dates.dropna()
-    if not valid_dates.empty:
-        report["date_range"] = {
-            "earliest": valid_dates.min().strftime("%Y-%m-%d"),
-            "latest": valid_dates.max().strftime("%Y-%m-%d"),
-        }
-        report["data_cutoff"] = report["date_range"]["latest"]
+    source_date_range = _date_range(valid_dates.dt.strftime("%Y-%m-%d").tolist())
+    report["source_date_range"] = source_date_range
+    report["date_range"] = dict(source_date_range)
 
     pending: list[dict[str, str]] = []
     identity_rows: dict[str, list[dict[str, Any]]] = {}
@@ -217,6 +228,19 @@ def _analyse(source: pd.DataFrame, season: str) -> tuple[dict[str, Any], list[di
             {"fixture_id": fixture_id, "source_rows": [item["source_row"] for item in rows], "conflict": conflict, "rows": rows}
         )
 
+    completed_date_range = _date_range(
+        [item["date"] for item in report["completed_row_details"]]
+    )
+    pending_date_range = _date_range([item["date"] for item in pending])
+    report["completed_date_range"] = completed_date_range
+    report["pending_date_range"] = pending_date_range
+    report["completed_data_cutoff"] = completed_date_range["latest"]
+    report["completed_data_cutoff_status"] = (
+        "known" if report["completed_data_cutoff"] else "missing_no_completed_results"
+    )
+    report["data_cutoff"] = report["completed_data_cutoff"]
+    report["data_cutoff_status"] = report["completed_data_cutoff_status"]
+
     _set_counts(report, **counts)
     if report["completed_rows"]:
         report["warnings"].append(
@@ -264,7 +288,12 @@ def convert_fixture_source_frame(
 
 
 def compare_fixtures(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[str, Any]:
-    """Compare two validated fixture frames by their explicit fixture IDs."""
+    """Compare two validated fixture frames by explicit IDs, without fuzzy aliases.
+
+    A changed source team spelling normally changes the stable ID and is therefore
+    reported as added plus missing. ``revised`` is reserved for rows retaining the
+    same fixture ID, such as a date change.
+    """
 
     baseline_frame = validate_fixtures(baseline).loc[:, FIXTURE_COLUMNS]
     candidate_frame = validate_fixtures(candidate).loc[:, FIXTURE_COLUMNS]
@@ -313,6 +342,10 @@ def compare_fixtures(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[st
         "counts": counts,
         "details": {"added": added, "unchanged": unchanged, "revised": revised, "missing_from_candidate": missing},
         "missing_from_candidate_requires_manual_judgment": bool(missing),
+        "team_text_change_semantics": (
+            "stable fixture IDs include season and stripped source home/away text; "
+            "changed team text is added plus missing/manual review unless the same ID is retained"
+        ),
         "apply": {"performed": False, "pointer_updated": False, "baseline_deleted": False},
     }
 

@@ -46,6 +46,10 @@ class EplFixtureAdapterTests(unittest.TestCase):
         self.assertEqual(report["status"], "ok")
         self.assertEqual(report["pending_rows"], 1)
         self.assertEqual(report["completed_rows"], 1)
+        self.assertEqual(report["source_date_range"], {"earliest": "2025-08-01", "latest": "2025-08-02"})
+        self.assertEqual(report["completed_date_range"], {"earliest": "2025-08-02", "latest": "2025-08-02"})
+        self.assertEqual(report["pending_date_range"], {"earliest": "2025-08-01", "latest": "2025-08-01"})
+        self.assertEqual(report["data_cutoff"], "2025-08-02")
         self.assertEqual(fixtures.loc[0, "fixture_id"], stable_fixture_id("2025-26", "Alpha", "Beta"))
         revised = source.copy()
         revised.loc[0, "Date"] = "15/08/2025"
@@ -122,6 +126,30 @@ class EplFixtureAdapterTests(unittest.TestCase):
             self.assertEqual(quality["status"], "no_pending_fixtures")
             self.assertIn("no_pending_fixtures", " ".join(quality["warnings"]))
 
+    def test_data_cutoff_uses_completed_rows_not_future_pending_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = write_source(
+                root,
+                [
+                    ["01/08/2025", "Alpha", "Beta", "1", "0"],
+                    ["15/09/2025", "Gamma", "Delta", "", ""],
+                ],
+            )
+            result = prepare_epl_fixtures(source, "2025-26", root / "data")
+            manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+            quality = json.loads(Path(result["quality_report_path"]).read_text(encoding="utf-8"))
+            expected_source_range = {"earliest": "2025-08-01", "latest": "2025-09-15"}
+            expected_completed_range = {"earliest": "2025-08-01", "latest": "2025-08-01"}
+            expected_pending_range = {"earliest": "2025-09-15", "latest": "2025-09-15"}
+            for evidence in (manifest, quality):
+                self.assertEqual(evidence["source_date_range"], expected_source_range)
+                self.assertEqual(evidence["completed_date_range"], expected_completed_range)
+                self.assertEqual(evidence["pending_date_range"], expected_pending_range)
+                self.assertEqual(evidence["completed_data_cutoff"], "2025-08-01")
+                self.assertEqual(evidence["data_cutoff"], "2025-08-01")
+                self.assertEqual(evidence["data_cutoff_status"], "known")
+
     def test_failed_snapshot_writes_manifest_quality_and_no_fixture_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -162,6 +190,11 @@ class EplFixtureAdapterTests(unittest.TestCase):
             self.assertEqual(manifest["source_sha256"], file_sha256(raw))
             self.assertEqual(manifest["canonical_output_sha256"], file_sha256(first["fixture_path"]))
             self.assertEqual(manifest["canonical_output_row_count"], 1)
+            self.assertEqual(manifest["source_date_range"], {"earliest": "2025-08-01", "latest": "2025-08-01"})
+            self.assertEqual(manifest["pending_date_range"], {"earliest": "2025-08-01", "latest": "2025-08-01"})
+            self.assertIsNone(manifest["completed_data_cutoff"])
+            self.assertIsNone(manifest["data_cutoff"])
+            self.assertEqual(manifest["data_cutoff_status"], "missing_no_completed_results")
             self.assertIsNone(manifest["source_label"])
             self.assertEqual(manifest["source_url"], "https://local.invalid/e0.csv")
             self.assertEqual(source.read_bytes(), before)
@@ -194,6 +227,9 @@ class EplFixtureAdapterTests(unittest.TestCase):
             self.assertEqual(diff["counts"], {"added": 1, "unchanged": 1, "revised": 1, "missing_from_candidate": 1})
             self.assertEqual(diff["details"]["revised"][0]["changed_fields"], ["date"])
             self.assertTrue(diff["missing_from_candidate_requires_manual_judgment"])
+            self.assertIn("added plus missing/manual review", diff["team_text_change_semantics"])
+            self.assertEqual(diff["details"]["added"][0]["candidate"]["home_team"], "New")
+            self.assertEqual(diff["details"]["missing_from_candidate"][0]["baseline"]["home_team"], "Gone")
             self.assertEqual(baseline_path.read_bytes(), before)
             self.assertEqual(compare_fixtures(baseline, load_fixtures(result["fixture_path"]))["counts"]["revised"], 1)
 
