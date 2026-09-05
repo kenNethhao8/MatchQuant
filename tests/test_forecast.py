@@ -119,6 +119,8 @@ class ForecastTests(unittest.TestCase):
             self.assertTrue(all((run_dir / name).is_file() for name in ("predictions.csv", "forecast_report.md", "run_config.json")))
             payload = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["history"]["rows_used_before_as_of"], 7)
+            self.assertEqual(payload["predictions_sha256"], file_sha256(run_dir / "predictions.csv"))
+            self.assertEqual(payload["outputs"]["predictions_sha256"], file_sha256(run_dir / "predictions.csv"))
             self.assertFalse(payload["validation"]["fixture_results_used_for_model_updates"])
             probabilities = result["predictions"][["home_win_prob", "draw_prob", "away_win_prob"]]
             self.assertTrue((probabilities >= 0).all().all())

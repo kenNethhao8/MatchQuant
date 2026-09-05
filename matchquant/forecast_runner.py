@@ -99,6 +99,7 @@ def run_forecast(
     )
     run_dir = new_forecast_run_dir(output_root)
     predictions_path = write_predictions(run.predictions, run_dir / "predictions.csv")
+    predictions_hash = file_sha256(predictions_path)
     config_path = run_dir / "run_config.json"
     report_path = run_dir / "forecast_report.md"
     config_payload: dict[str, Any] = {
@@ -126,6 +127,7 @@ def run_forecast(
             "config_sha256": _configuration_hash(config),
         },
         "season_mode": run.season_mode,
+        "predictions_sha256": predictions_hash,
         "selection": selection,
         "selection_evidence_status": selection["evidence_status"],
         "selection_as_of_status": selection["selection_as_of_status"],
@@ -139,6 +141,7 @@ def run_forecast(
         "outputs": {
             "run_dir": str(run_dir),
             "predictions": str(predictions_path),
+            "predictions_sha256": predictions_hash,
             "forecast_report": str(report_path),
             "run_config": str(config_path),
         },

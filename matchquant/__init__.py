@@ -1,4 +1,4 @@
-"""MatchQuant M1-M5: deterministic football research and local forecasts."""
+"""MatchQuant M1-M6: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -47,6 +47,13 @@ from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
 from .schema import DataValidationError, REQUIRED_COLUMNS, validate_matches
 from .selection import load_candidates, parse_validation_folds, run_nested_selection
+from .settlement import (
+    SETTLEMENT_METRICS_SCHEMA_VERSION,
+    SETTLEMENT_SCHEMA_VERSION,
+    load_forecast_run,
+    settle_forecast_run,
+    settle_predictions,
+)
 
 __all__ = [
     "DataValidationError",
@@ -68,6 +75,8 @@ __all__ = [
     "ModelRun",
     "PoissonModel",
     "REQUIRED_COLUMNS",
+    "SETTLEMENT_METRICS_SCHEMA_VERSION",
+    "SETTLEMENT_SCHEMA_VERSION",
     "create_model",
     "audit_source_frame",
     "audit_sync_source_frame",
@@ -86,6 +95,7 @@ __all__ = [
     "load_selection_run_config",
     "load_matches",
     "load_candidates",
+    "load_forecast_run",
     "multiclass_ece",
     "parse_validation_folds",
     "reliability_table",
@@ -93,6 +103,8 @@ __all__ = [
     "run_forecast",
     "run_walk_forward",
     "run_nested_selection",
+    "settle_forecast_run",
+    "settle_predictions",
     "normalize_season",
     "prepare_epl",
     "prepare_epl_fixtures",

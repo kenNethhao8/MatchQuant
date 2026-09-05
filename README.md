@@ -1,4 +1,4 @@
-# MatchQuant M1–M5 — Research Engine
+# MatchQuant M1–M6 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -167,7 +167,7 @@ python -m matchquant forecast `
 
 - `predictions.csv`：fixture 信息、H/D/A 概率、`model_most_likely_result`（仅表示“模型最可能结果”）及 Poisson 模型的期望进球字段；不含未来真实比分；
 - `forecast_report.md`：中文快照说明、输入证据、逐 fixture 结果、限制与免责声明；
-- `run_config.json`：历史/fixture/选择配置的路径和 SHA-256、as-of、实际历史 cutoff/行数、模型配置、选择证据状态、selection as-of 状态、M3 验证期最新结束边界、final-test 未参与选模的说明、输出路径和免责声明。
+- `run_config.json`：历史/fixture/选择配置的路径和 SHA-256、as-of、实际历史 cutoff/行数、模型配置、选择证据状态、selection as-of 状态、M3 验证期最新结束边界、final-test 未参与选模的说明、`predictions.csv` SHA-256、输出路径和免责声明。
 
 M4 输出是本地研究快照，不是当前实时赛程预测。概率经过有限、非负、和为 1 的合法性检查，但没有因此声明已经校准；没有外部赔率、阵容/伤停/新闻、机器学习、实时服务、数据库或自动调度，也不构成投注建议、盈利承诺或未来表现保证。若需要真实历史时点 replay，应在 `D:\Codex\matchquant_runs\` 临时生成无比分 fixture 输入，并在记录中明确 as-of 和输入 hash；它仍不是当前实时赛程预测。
 
@@ -203,6 +203,40 @@ M5 只接受用户明确传入的本地 Football-Data.co.uk `E0` 兼容 CSV。�
    ```
 
    M4 仍只读显式本地文件；fixture 与 results schema 保持分离，预测运行另存自己的输入 hash、as-of 和报告。每一步都可从 raw snapshot、manifest、质量/差异报告和 M4 run config 审计。snapshot 的日期范围和本地版本不等于实时或完整赛程，也不证明来源具有再分发授权。
+
+## M6：本地预测结算与评估闭环
+
+M6 用一个已经完成的 M4 forecast run 和用户明确指定的本地 M1 canonical 最终赛果 CSV 做一次离线结算。它只读取 run 目录中的 `run_config.json`、`predictions.csv` 以及 `--results` 指定的结果文件；不下载赛果、不调用 `epl-sync`、不写入 `D:\Codex\matchquant_data\`，不更新 active/current pointer，不重跑模型，也不修改任何输入。
+
+手动闭环示例（先完成 M4 forecast）：
+
+```powershell
+python -m matchquant settle `
+  --forecast-run D:\Codex\matchquant_runs\m4_forecast_<...> `
+  --results D:\Codex\my_results\epl_canonical.csv `
+  --output-root D:\Codex\matchquant_runs
+```
+
+仓库内的小型合成端到端示例可以这样运行：
+
+```powershell
+python -m matchquant forecast `
+  --history examples\synthetic_matches.csv `
+  --fixtures examples\synthetic_fixtures.csv `
+  --as-of 2024-01-07 `
+  --model poisson `
+  --model-config examples\forecast_poisson.json `
+  --output-root D:\Codex\matchquant_runs
+
+python -m matchquant settle `
+  --forecast-run D:\Codex\matchquant_runs\m4_forecast_<...> `
+  --results examples\synthetic_matches.csv `
+  --output-root D:\Codex\matchquant_runs
+```
+
+每次结算会新建唯一的 `m6_settlement_<UTC时间>_<唯一ID>` 目录，保存 `settlement.csv`、`metrics.json`、`run_config.json` 和中文 `settlement_report.md`。身份匹配严格使用 `season + home_team + away_team` 的去首尾空白原文本，不猜测球队别名、不做模糊匹配；唯一命中允许改期并标记 `same_date`/`date_changed`，零命中保留为预期的 `unresolved`，重复命中标记 `ambiguous`。结果早于预测 as-of 或早于预测 fixture 日期的行标记 `time_conflict`，不进入指标。`metrics.json` 只对安全结算子集计算 multiclass log loss、三分类 Brier 和 accuracy；零场结算时三项预测指标为 `null`，coverage 按安全结算数/总预测数为 `0`。结果输入仍需由用户通过既有 M2/M2.1 或其他明确的本地 canonical 文件自行获得，M6 本身不导入赛果。
+
+新生成的 M4 run 会在 `run_config.json` 中记录 `predictions.csv` 的 SHA-256；旧 M4 run 会明确记录 `unrecorded_legacy`，不会被 M6 偷改。M6 输出是离线研究审计，不是实时预测、投注建议、盈利承诺或未来表现保证。
 
 ## 三个模型
 
@@ -252,4 +286,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断与本地 Alpha 快照不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5/M6 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照与本地结算不等于未来表现、盈利、投注价值或投注建议。

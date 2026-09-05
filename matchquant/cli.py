@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M5."""
+"""Command-line entry point for MatchQuant M1-M6."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
 from .schema import DataValidationError
 from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
+from .settlement import settle_forecast_run
 
 DEFAULT_M3_CANDIDATE_CONFIG = Path(__file__).resolve().parent.parent / "examples" / "m3_candidates.json"
 
@@ -111,6 +112,19 @@ def _parser() -> argparse.ArgumentParser:
         "--data-root", "--data-dir", dest="data_root", type=Path,
         default=Path(r"D:\Codex\matchquant_data"),
         help="root for immutable fixture snapshots",
+    )
+    settle = subparsers.add_parser("settle", help="offline-settle one M4 forecast with local M1 results")
+    settle.add_argument(
+        "--forecast-run", "--forecast-run-dir", "--forecast-dir", dest="forecast_run",
+        type=Path, required=True, help="completed M4 forecast run directory",
+    )
+    settle.add_argument(
+        "--results", "--results-csv", dest="results", type=Path, required=True,
+        help="explicit local M1 canonical final-results CSV",
+    )
+    settle.add_argument(
+        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
+        help="root for a new timestamped M6 settlement directory",
     )
     return parser
 
@@ -430,6 +444,17 @@ def _epl_fixtures_prepare(args: argparse.Namespace) -> int:
     return 2 if result["status"] == "no_pending_fixtures" else 0
 
 
+def _settle(args: argparse.Namespace) -> int:
+    result = settle_forecast_run(args.forecast_run, args.results, output_root=args.output_root)
+    print(f"MatchQuant M6 settlement {result['status']}")
+    print(f"settled={result['counts']['settled']} total={result['counts']['total_predictions']} coverage={result['metrics']['coverage']}")
+    print(f"settlement={result['settlement_path']}")
+    print(f"metrics={result['metrics_path']}")
+    print(f"settlement_report={result['settlement_report_path']}")
+    print(f"run_config={result['run_config_path']}")
+    return 2 if result["status"] == "needs_review" else 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -448,6 +473,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_epl_sync(args))
         if args.command == "epl-fixtures-prepare":
             raise SystemExit(_epl_fixtures_prepare(args))
+        if args.command == "settle":
+            raise SystemExit(_settle(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
