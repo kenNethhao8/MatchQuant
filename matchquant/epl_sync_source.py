@@ -37,6 +37,18 @@ CURRENT_POINTER_VERSION = "m2.1-current-pointer-v1"
 CURRENT_POINTER_FILENAME = "epl_current.json"
 
 
+def manifest_source_urls(manifest: dict[str, Any]) -> list[str]:
+    """Return only explicitly supplied non-empty source URLs."""
+    values = manifest.get("source_urls")
+    if not isinstance(values, list):
+        values = []
+    if not values and isinstance(manifest.get("source_url"), str):
+        values = [manifest["source_url"]]
+    if not values:
+        values = [entry.get("url") for entry in manifest.get("files", []) if isinstance(entry, dict)]
+    return [str(value) for value in values if isinstance(value, str) and value.strip()]
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

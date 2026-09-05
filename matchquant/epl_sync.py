@@ -26,6 +26,7 @@ from .epl_sync_source import (
     audit_sync_source_frame,
     compare_canonical,
     convert_sync_source_frame,
+    manifest_source_urls,
 )
 from .io import file_sha256, load_matches, write_json
 from .schema import DataValidationError, validate_matches
@@ -150,7 +151,7 @@ def _quality_report(
         "declared_in_progress_season": in_progress_season,
         "season_policy": season_policy,
         "strict_380_gate_applied_by_season": {season: policy["strict_380_gate_applied"] for season, policy in season_policy.items()},
-        "source_urls": [str(url) for url in (manifest.get("source_urls") or [entry.get("url") for entry in manifest.get("files", [])])],
+        "source_urls": manifest_source_urls(manifest),
         "data_cutoff": max((report["latest_date"] for report in reports if report.get("latest_date")), default=None),
         "status": "failed" if failed else ("warning" if warnings else "ok"),
         "errors": errors,
@@ -261,8 +262,8 @@ def _write_stage_outputs(
         "source": manifest.get("source"),
         "competition": manifest.get("competition"),
         "division": manifest.get("division"),
-        "source_urls": manifest.get("source_urls") or [entry.get("url") for entry in entries],
-        "retrieved_at": [entry.get("retrieved_at") for entry in entries],
+        "source_urls": manifest_source_urls(manifest),
+        "retrieved_at": [entry.get("retrieved_at") for entry in entries if entry.get("retrieved_at")],
         "requested_seasons": list(selected),
         "in_progress_season": in_progress_season,
         "declared_in_progress_season": in_progress_season,
@@ -304,7 +305,7 @@ def _write_stage_outputs(
         "strict_380_gate_applied_by_season": quality["strict_380_gate_applied_by_season"],
         "seasons": sorted(str(value) for value in candidate["season"].unique()),
         "data_cutoff": _cutoff(candidate),
-        "inputs": [{"season": report["season"], "raw_filename": report.get("raw_filename"), "url": report.get("source_url"), "sha256": report.get("raw_sha256")} for report in reports],
+        "inputs": [{"season": report["season"], "raw_filename": report.get("raw_filename"), "url": report.get("source_url"), "source_label": report.get("source_label"), "source_type": report.get("source_type"), "upstream_retrieved_at": report.get("upstream_retrieved_at"), "sha256": report.get("raw_sha256")} for report in reports],
         "baseline": {"version": baseline_meta["version"], "canonical_sha256": baseline_meta["canonical_sha256"]},
         "output": {"filename": str(candidate_path), "sha256": candidate_hash, "rows": int(len(candidate)), "columns": list(CANONICAL_COLUMNS)},
         "quality_report": str(quality_path),
@@ -384,7 +385,8 @@ def sync_epl(
         Path(current_pointer_path).expanduser().resolve() if current_pointer_path else None,
     )
     outputs = _write_stage_outputs(snapshot, baseline, baseline_meta, selected, apply, declared_in_progress)
-    result: dict[str, Any] = {"status": "dry-run", "dry_run": not apply, "apply_requested": bool(apply), "snapshot_id": snapshot.name, "staging_dir": str(snapshot), "requested_seasons": list(selected), "in_progress_season": declared_in_progress, "declared_in_progress_season": declared_in_progress, "strict_380_gate_applied_by_season": outputs["quality"]["strict_380_gate_applied_by_season"], "baseline": baseline_meta, "candidate_path": str(outputs["candidate_path"]), "candidate_sha256": outputs["candidate_hash"], "quality_report_path": str(outputs["quality_path"]), "quality_report_sha256": outputs["quality_hash"], "diff_report_path": str(outputs["diff_path"]), "diff_report_sha256": outputs["diff_hash"], "processed_manifest_path": str(outputs["processed_path"]), "skipped_unfinished": outputs["quality"]["totals"]["skipped_unfinished_count"], "diff": outputs["diff"]["counts"]}
+    result: dict[str, Any] = {"status": "dry-run", "dry_run": not apply, "apply_requested": bool(apply), "snapshot_id": snapshot.name, "staging_dir": str(snapshot), "requested_seasons": list(selected), "in_progress_season": declared_in_progress, "declared_in_progress_season": declared_in_progress, "strict_380_gate_applied_by_season": outputs["quality"]["strict_380_gate_applied_by_season"], "baseline": baseline_meta, "candidate_path": str(outputs["candidate_path"]), "candidate_sha256": outputs["candidate_hash"], "quality_report_path": str(outputs["quality_path"]), "quality_report_sha256": outputs["quality_hash"], "diff_report_path": str(outputs["diff_path"]), "diff_report_sha256": outputs["diff_hash"], "processed_manifest_path": str(outputs["processed_path"]), "skipped_unfinished": outputs["quality"]["totals"]["skipped_unfinished_count"], "diff": outputs["diff"]["counts"], "source_urls": outputs["diff"]["source_urls"]}
+    result.update({key: outputs["manifest"].get(key) for key in ("source", "source_type", "source_label", "competition", "division")})
     if apply and outputs["diff"]["apply"]["blockers"]:
         result["status"] = "blocked"
         result["apply_blockers"] = outputs["diff"]["apply"]["blockers"]

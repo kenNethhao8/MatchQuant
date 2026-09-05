@@ -1,4 +1,4 @@
-"""MatchQuant M1-M6: deterministic football research and local forecasts."""
+"""MatchQuant M1-M7: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -24,6 +24,11 @@ from .epl_fixtures import (
     convert_fixture_source_frame,
     prepare_epl_fixtures,
     stable_fixture_id,
+)
+from .epl_local_stage import (
+    LOCAL_STAGE_ADAPTER_VERSION,
+    LOCAL_STAGE_MANIFEST_VERSION,
+    stage_local_epl_source,
 )
 from .fixtures import (
     FIXTURE_COLUMNS,
@@ -68,6 +73,8 @@ __all__ = [
     "FIXTURE_MANIFEST_VERSION",
     "FIXTURE_QUALITY_VERSION",
     "FIXTURE_SOURCE_REQUIRED_COLUMNS",
+    "LOCAL_STAGE_ADAPTER_VERSION",
+    "LOCAL_STAGE_MANIFEST_VERSION",
     "EloModel",
     "FixtureValidationError",
     "FrequencyModel",
@@ -111,6 +118,7 @@ __all__ = [
     "source_url",
     "stable_match_id",
     "stable_fixture_id",
+    "stage_local_epl_source",
     "sync_epl",
     "validate_matches",
     "write_json",

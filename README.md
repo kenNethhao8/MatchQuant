@@ -1,4 +1,4 @@
-# MatchQuant M1–M6 — Research Engine
+# MatchQuant M1–M7 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -106,6 +106,50 @@ python -m matchquant epl-sync `
 ```
 
 成功 apply 会新建 `processed\versions\m2.1-<staging快照名>\`，保存 canonical、processed manifest、质量/差异报告，再原子更新 `processed\epl_current.json`。旧的 M2 `processed\epl_canonical.csv`、manifest、raw 快照和报告不会被覆盖；初始 M2 数据无需迁移。
+
+## M7：本地赛果文件到 M2.1 staging 的桥接
+
+`epl-local-stage` 是一个完全离线的原始文件封存入口。它只把用户明确指定的本地 E0 CSV 按 bytes 复制到 `D:\Codex\matchquant_data\staging\epl_local_<UTC时间>_<唯一ID>\raw\E0_YYYY-YY.csv`，计算 SHA-256，并写出兼容 `epl-sync --staging-dir` 的 `raw\source_manifest.json`。原输入不会被移动或修改，raw copy 会尽量设为只读；M7 不生成 canonical、不做 diff、不写 `processed\versions`、不更新 `processed\epl_current.json`，也不调用 M4/M5/M6。
+
+M7 manifest 会明确标记 `status=unverified` 和 `validation_status=unverified`：M7 不重复 M2.1 的日期、比分、重复 fixture、completed/unfinished 或 380 场检查。`source_path` 是用户提供的绝对本地路径，`local_archived_at` 只表示本地封存时间，不能当作上游抓取时间；只有用户明确传入 `--upstream-retrieved-at`（别名 `--source-retrieved-at`）时，才会记录 `upstream_retrieved_at`。`--source-url` 和 `--source-label` 仅写 provenance，绝不会触发网络，也不会从文件名猜 URL。没有 URL 时 manifest、质量报告和差异报告的 `source_urls` 为空，不会伪造 URL。
+
+手动闭环如下：
+
+1. 用户在本地下载或导出一个 E0 CSV，保留原始文件。
+2. 创建可审计的 M7 local staging snapshot：
+
+   ```powershell
+   python -m matchquant epl-local-stage `
+     --source-csv D:\Codex\my_input\E0.csv `
+     --season 2025-26 `
+     --source-label "user-provided local E0 export" `
+     --data-dir D:\Codex\matchquant_data
+   ```
+
+   若确实知道上游获取时间，可额外传 `--upstream-retrieved-at 2026-09-05T08:30:00Z`；不要把文件复制时间填到这个字段。M7 成功只代表 raw bytes 已封存，尚未代表 CSV 合法。
+3. 把命令输出的 snapshot 路径交给现有 M2.1，完全离线生成质量和差异报告：
+
+   ```powershell
+   python -m matchquant epl-sync `
+     --staging-dir D:\Codex\matchquant_data\staging\epl_local_<...> `
+     --data-dir D:\Codex\matchquant_data `
+     --dry-run
+   ```
+
+   正常完整赛季仍须 380 场。对于确实尚未结束的赛季，必须在这一步明确声明 `--in-progress-season 2025-26`；两项比分都为空的合法行会由 epl-sync 报告为 `skipped_unfinished`，M7 不会静默处理，部分比分和其它非法行仍会失败。
+4. 只有 dry-run 证明 addition-only、无 `revised`、无 `missing_from_candidate` 且用户再次明确请求时，才执行同一个 snapshot 的 `epl-sync --apply`。由现有 M2.1 创建 version 和原子更新 pointer；M7 本身永远不 apply。
+
+   ```powershell
+   python -m matchquant epl-sync `
+     --staging-dir D:\Codex\matchquant_data\staging\epl_local_<...> `
+     --data-dir D:\Codex\matchquant_data `
+     --in-progress-season 2025-26 `
+     --apply
+   ```
+
+5. M5 `epl-fixtures-prepare` 与 M4/M6 继续使用各自明确的本地输入；M7 不把 completed rows 自动写入历史，也没有实时性声明。
+
+缺失文件或封存 I/O 错误会留下 `status=failed` 的 manifest 后明确失败。格式错误、缺列或坏行可以先作为 `unverified` raw snapshot 留证，但必须由后续 `epl-sync --staging-dir` 生成完整失败质量报告；在质量通过前不得把它当成成功的历史数据。
 
 ## M3：严格时序模型选择与概率校准诊断
 

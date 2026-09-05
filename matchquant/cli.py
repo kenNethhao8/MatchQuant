@@ -12,6 +12,7 @@ import pandas as pd
 from .backtest import run_models
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .epl_fixtures import prepare_epl_fixtures
+from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
 from .forecast import run_forecast
 from .io import file_sha256, load_matches, write_json, write_predictions
@@ -99,6 +100,24 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--current-pointer", type=Path, help="optional current pointer path")
     sync.add_argument("--in-progress-season", help="explicitly allow an incomplete requested season, such as 2025-26")
     sync.add_argument("--timeout", type=float, default=30.0)
+    local_stage = subparsers.add_parser(
+        "epl-local-stage",
+        help="offline-archive one local E0 result file for the M2.1 sync review",
+    )
+    local_stage.add_argument("--source-csv", type=Path, required=True, help="explicit local E0-compatible CSV")
+    local_stage.add_argument("--season", required=True, help="explicit season such as 2025-26")
+    local_stage.add_argument("--source-url", help="optional URL recorded as provenance only; no network access")
+    local_stage.add_argument("--source-label", help="optional human-readable provenance label")
+    local_stage.add_argument(
+        "--upstream-retrieved-at",
+        "--source-retrieved-at",
+        dest="upstream_retrieved_at",
+        help="optional user-provided upstream retrieval time; local archive time is never used here",
+    )
+    local_stage.add_argument(
+        "--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"),
+        help="root for immutable M7 local staging snapshots",
+    )
     fixture_prepare = subparsers.add_parser(
         "epl-fixtures-prepare",
         help="offline-copy and normalize one local Football-Data E0 fixture source",
@@ -401,7 +420,11 @@ def _epl_sync(args: argparse.Namespace) -> int:
     mode = "apply" if result["apply_requested"] else "dry-run"
     counts = result["diff"]
     print(f"MatchQuant M2.1 EPL sync {result['status']}")
-    print("source=Football-Data.co.uk competition=English Premier League division=E0")
+    print(f"source={result.get('source') or 'unknown'} competition={result.get('competition') or 'unknown'} division={result.get('division') or 'unknown'}")
+    if result.get("source_label"):
+        print(f"source_label={result['source_label']}")
+    if result.get("source_urls"):
+        print(f"source_urls={','.join(result['source_urls'])}")
     policy = result["in_progress_season"] or "none"
     print(f"mode={mode} seasons={','.join(result['requested_seasons'])} baseline={result['baseline']['version']} in_progress_season={policy}")
     print(f"staging={result['staging_dir']}")
@@ -414,6 +437,25 @@ def _epl_sync(args: argparse.Namespace) -> int:
     print(f"processed_manifest={result['processed_manifest_path']}")
     if result["status"] == "applied":
         print(f"version={result['version_id']} pointer={result['pointer_path']}")
+    return 0
+
+
+def _epl_local_stage(args: argparse.Namespace) -> int:
+    result = stage_local_epl_source(
+        args.source_csv,
+        args.season,
+        args.data_dir,
+        source_url=args.source_url,
+        source_label=args.source_label,
+        upstream_retrieved_at=args.upstream_retrieved_at,
+    )
+    manifest = result["manifest"]
+    print(f"MatchQuant M7 local staging {result['status']}")
+    print(f"snapshot={result['snapshot_dir']}")
+    print(f"raw={result['raw_path']}")
+    print(f"raw_sha256={result['raw_sha256']}")
+    print(f"manifest={result['manifest_path']}")
+    print(f"validation={manifest['validation_status']} next=epl-sync --staging-dir")
     return 0
 
 
@@ -471,6 +513,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_epl_prepare(args))
         if args.command == "epl-sync":
             raise SystemExit(_epl_sync(args))
+        if args.command == "epl-local-stage":
+            raise SystemExit(_epl_local_stage(args))
         if args.command == "epl-fixtures-prepare":
             raise SystemExit(_epl_fixtures_prepare(args))
         if args.command == "settle":
