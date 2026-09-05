@@ -10,13 +10,14 @@ from typing import Any
 import pandas as pd
 
 from .backtest import run_models
+from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .models import MODEL_NAMES
 from .schema import DataValidationError
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="matchquant", description="Reproducible football 1X2 M1 backtest")
+    parser = argparse.ArgumentParser(prog="matchquant", description="Reproducible football 1X2 research engine")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run", help="run an online walk-forward backtest")
     run.add_argument("--config", type=Path, help="optional JSON configuration")
@@ -26,6 +27,18 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--model", choices=[*MODEL_NAMES, "all"], help="model or all three")
     run.add_argument("--season-mode", choices=["carry", "reset"], help="carry or reset online state across seasons")
     run.add_argument("--output-dir", type=Path, help="directory for predictions, metrics, and run config")
+    download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
+    download.add_argument(
+        "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
+    )
+    download.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
+    download.add_argument("--timeout", type=float, default=30.0)
+    prepare = subparsers.add_parser("epl-prepare", help="offline-convert downloaded EPL CSVs to M1 canonical CSV")
+    prepare.add_argument("--seasons", nargs="+", help="seasons to convert; default: every season in source manifest")
+    prepare.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
+    prepare.add_argument("--output", type=Path, help="canonical CSV path")
+    prepare.add_argument("--quality-report", type=Path, help="quality JSON path")
+    prepare.add_argument("--processed-manifest", type=Path, help="processed manifest JSON path")
     return parser
 
 
@@ -79,6 +92,7 @@ def _run(args: argparse.Namespace) -> int:
     output_dir = options["output_dir"].expanduser().resolve()
     matches = load_matches(input_path)
     input_hash = file_sha256(input_path)
+    data_cutoff = str(matches["date"].max())
     names = _model_names(str(options["model"]))
     configs = {name: options["model_configs"].get(name, {}) for name in names}
     runs = run_models(
@@ -96,6 +110,7 @@ def _run(args: argparse.Namespace) -> int:
         "schema_version": "m1",
         "input": str(input_path),
         "input_sha256": input_hash,
+        "data_cutoff": data_cutoff,
         "test_start": str(options["test_start"]),
         "test_end": options.get("test_end"),
         "season_mode": str(options["season_mode"]),
@@ -106,6 +121,7 @@ def _run(args: argparse.Namespace) -> int:
         "schema_version": "m1",
         "input": str(input_path),
         "input_sha256": input_hash,
+        "data_cutoff": data_cutoff,
         "test_start": str(options["test_start"]),
         "test_end": options.get("test_end"),
         "season_mode": str(options["season_mode"]),
@@ -126,12 +142,40 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _epl_download(args: argparse.Namespace) -> int:
+    manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
+    print("MatchQuant M2 EPL download complete")
+    print(f"seasons={','.join(manifest['requested_seasons'])}")
+    print(f"manifest={args.data_dir / 'raw' / 'source_manifest.json'}")
+    return 0
+
+
+def _epl_prepare(args: argparse.Namespace) -> int:
+    result = prepare_epl(
+        args.seasons,
+        args.data_dir,
+        output_path=args.output,
+        quality_report_path=args.quality_report,
+        processed_manifest_path=args.processed_manifest,
+    )
+    print("MatchQuant M2 EPL prepare complete")
+    print(f"seasons={','.join(result['seasons'])} rows={result['rows']} status={result['status']}")
+    print(f"canonical={result['output_path']}")
+    print(f"quality_report={result['quality_report_path']}")
+    print(f"processed_manifest={result['processed_manifest_path']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
     try:
         if args.command == "run":
             raise SystemExit(_run(args))
+        if args.command == "epl-download":
+            raise SystemExit(_epl_download(args))
+        if args.command == "epl-prepare":
+            raise SystemExit(_epl_prepare(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
