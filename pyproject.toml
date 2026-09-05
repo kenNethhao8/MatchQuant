@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matchquant"
+version = "0.1.0"
+description = "A reproducible, low-cost football prediction and walk-forward backtesting framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+]
+
+[project.scripts]
+matchquant = "matchquant.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["matchquant*"]
