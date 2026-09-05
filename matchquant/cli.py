@@ -12,6 +12,7 @@ import pandas as pd
 from .backtest import run_models
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .epl_sync import sync_epl
+from .forecast import run_forecast
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
@@ -54,6 +55,23 @@ def _parser() -> argparse.ArgumentParser:
     select.add_argument("--season-mode", choices=["carry", "reset"], default="carry")
     select.add_argument("--calibration-bins", type=int, default=10)
     select.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"))
+    forecast = subparsers.add_parser("forecast", help="run one offline local Alpha fixture forecast")
+    forecast.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
+    forecast.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
+    forecast.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
+    selection = forecast.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
+        "--selection-run-config", "--selection-config", "--selection-run", "--m3-run-config",
+        dest="selection_run_config", type=Path,
+        help="explicit M3 selection run_config.json",
+    )
+    selection.add_argument("--model", choices=MODEL_NAMES, help="explicit model name; requires --model-config")
+    forecast.add_argument("--model-config", "--config", type=Path, help="JSON config for the explicit --model")
+    forecast.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
+    forecast.add_argument(
+        "--output-root", "--output-dir", dest="output_root", type=Path,
+        default=Path(r"D:\Codex\matchquant_runs"), help="root for a new timestamped forecast directory",
+    )
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
         "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
@@ -294,6 +312,27 @@ def _select(args: argparse.Namespace) -> int:
     return 0
 
 
+def _forecast(args: argparse.Namespace) -> int:
+    result = run_forecast(
+        args.history,
+        args.fixtures,
+        args.as_of,
+        selection_run_config_path=args.selection_run_config,
+        model_name=args.model,
+        model_config_path=args.model_config,
+        season_mode=args.season_mode,
+        output_root=args.output_root,
+    )
+    run = result["run"]
+    print("MatchQuant M4 forecast complete")
+    print(f"model={run.model_name} fixtures={len(run.predictions)} history_rows_used={run.history_rows_used}")
+    print(f"as_of={run.as_of['value']} selection_evidence={result['selection_evidence_status']}")
+    print(f"predictions={result['predictions_path']}")
+    print(f"forecast_report={result['forecast_report_path']}")
+    print(f"run_config={result['run_config_path']}")
+    return 0
+
+
 def _epl_download(args: argparse.Namespace) -> int:
     manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
     print("MatchQuant M2 EPL download complete")
@@ -357,6 +396,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_run(args))
         if args.command == "select":
             raise SystemExit(_select(args))
+        if args.command == "forecast":
+            raise SystemExit(_forecast(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

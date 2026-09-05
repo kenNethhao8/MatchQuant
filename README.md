@@ -1,4 +1,4 @@
-# MatchQuant M1/M2 — Research Engine
+# MatchQuant M1–M4 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -127,6 +127,50 @@ python -m matchquant select `
 
 每次 M3 run 保存 `run_config.json`（输入 CSV SHA-256、候选配置 hash、manifest/cutoff 状态、边界、全部候选指标、选择规则、最终指标和输出路径）、`validation_metrics.json`、选中候选的 `predictions.csv`、`final_metrics.json` 和 `calibration_reliability.csv`。后者为 home/draw/away 各自的固定等宽分桶表，并报告 multiclass ECE；空桶保留为零计数的有限值行以保持稳定表形。ECE 和 reliability 是诊断，不代表概率已经校准；现有 log loss/Brier/accuracy 仍保留。若相邻 manifest 缺少 `dataset_version`，run 会明确记录缺失，而不会伪造版本号。
 
+## M4：本地 Alpha 预测工作流
+
+M4 接受两个相互独立的本地 CSV：历史结果必须是 M1 canonical schema，待赛赛程必须是无比分的 fixture schema。两者不能混写。fixture 模板至少包含：
+
+```text
+fixture_id,date,season,home_team,away_team
+```
+
+仓库提供 [`examples/synthetic_fixtures.csv`](examples/synthetic_fixtures.csv) 作为小型合成端到端样例；它不是当前真实赛程。fixture 校验会拒绝缺列/空值、非法日期、重复 `fixture_id`、同赛季同日期同主客队重复、主客队相同、canonical `match_id`，以及 `home_goals`/`away_goals` 中任何已填写的比分。空的比分列可以存在于外部模板中，但不会被当作结果输入。
+
+预测命令只读显式本地文件，不联网，不调用 `epl-sync`，也不会更新 `D:\Codex\matchquant_data\`：
+
+```powershell
+python -m matchquant forecast `
+  --history examples\synthetic_matches.csv `
+  --fixtures examples\synthetic_fixtures.csv `
+  --as-of 2024-01-07 `
+  --model poisson `
+  --model-config examples\forecast_poisson.json `
+  --output-root D:\Codex\matchquant_runs
+```
+
+`--model` 和 `--model-config` 是显式模型模式；JSON 可以是模型参数对象，也可以是包含 `model` 与 `config` 的对象。也可以把 M3 选择 run 的 `run_config.json` 显式交给预测命令，由程序提取 `selected_candidate`：
+
+```powershell
+python -m matchquant forecast `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --fixtures D:\Codex\my_fixtures.csv `
+  --as-of 2025-08-01 `
+  --selection-run-config D:\Codex\matchquant_runs\m3_select_<...>\run_config.json
+```
+
+两种模型选择方式互斥；M4 不设置新的隐式模型。若 M3 run 的 history SHA-256 与本次 `--history` 不一致，命令仍可在明确请求下运行，但 `run_config.json` 和 `forecast_report.md` 会标记 `history_hash_mismatch`，不得把该选择证据理解为本次历史的匹配训练证据。结构无效、候选缺失、模型配置无效或 hash 字段不合法会直接失败。
+
+`--as-of` 是预测快照边界：日期形式（如 `2024-01-07`）排除该日及之后的所有历史结果；精确时间形式只纳入严格早于该时间批次的历史结果。同一精确时间戳先作为一个批次处理；如果边界所在日混有 date-only 记录，精确时间边界会被拒绝，避免把未知时刻误当成已知时刻。所有 fixture 必须不早于 `as-of`；一次 forecast 只用 as-of 之前的历史更新模型，任何待赛 fixture 都不会更新模型状态。
+
+每次运行在 `D:\Codex\matchquant_runs\`（或 `--output-root`）下新建唯一的 `m4_forecast_<UTC时间>_<ID>` 目录，保存：
+
+- `predictions.csv`：fixture 信息、H/D/A 概率、`model_most_likely_result`（仅表示“模型最可能结果”）及 Poisson 模型的期望进球字段；不含未来真实比分；
+- `forecast_report.md`：中文快照说明、输入证据、逐 fixture 结果、限制与免责声明；
+- `run_config.json`：历史/fixture/选择配置的路径和 SHA-256、as-of、实际历史 cutoff/行数、模型配置、选择证据状态、输出路径和免责声明。
+
+M4 输出是本地研究快照，不是当前实时赛程预测。概率经过有限、非负、和为 1 的合法性检查，但没有因此声明已经校准；没有外部赔率、阵容/伤停/新闻、机器学习、实时服务、数据库或自动调度，也不构成投注建议、盈利承诺或未来表现保证。若需要真实历史时点 replay，应在 `D:\Codex\matchquant_runs\` 临时生成无比分 fixture 输入，并在记录中明确 as-of 和输入 hash；它仍不是当前实时赛程预测。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -175,4 +219,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3 仍不包含网页、数据库、实时预测、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测与校准诊断不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断与本地 Alpha 快照不等于未来表现、盈利、投注价值或投注建议。

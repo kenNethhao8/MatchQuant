@@ -50,13 +50,15 @@ def _parse_boundary(value: str | pd.Timestamp, label: str) -> tuple[pd.Timestamp
     return (timestamp.normalize() if date_only else timestamp), date_only
 
 
-def _timeline(frame: pd.DataFrame) -> pd.DataFrame:
+def _timeline(frame: pd.DataFrame, id_column: str = "match_id") -> pd.DataFrame:
+    if id_column not in frame.columns:
+        raise ValueError(f"timeline id column is missing: {id_column}")
     frame = frame.copy()
     calendar_day = frame["_timestamp"].dt.normalize()
     day_has_date_only = frame.groupby(calendar_day, sort=False)["_date_only"].transform("any")
     frame["_batch_key"] = frame["_timestamp"]
     frame.loc[day_has_date_only, "_batch_key"] = calendar_day.loc[day_has_date_only]
-    return frame.sort_values(["_batch_key", "match_id"], kind="mergesort").reset_index(drop=True)
+    return frame.sort_values(["_batch_key", id_column], kind="mergesort").reset_index(drop=True)
 
 
 def _test_mask(

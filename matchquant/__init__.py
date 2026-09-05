@@ -1,4 +1,4 @@
-"""MatchQuant M1/M2: deterministic football prediction and EPL data preparation."""
+"""MatchQuant M1-M4: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -13,6 +13,23 @@ from .epl import (
     stable_match_id,
 )
 from .epl_sync import audit_sync_source_frame, compare_canonical, convert_sync_source_frame, sync_epl
+from .fixtures import (
+    FIXTURE_COLUMNS,
+    FIXTURE_REQUIRED_COLUMNS,
+    FIXTURE_SCHEMA_VERSION,
+    FixtureValidationError,
+    load_fixtures,
+    validate_fixtures,
+)
+from .forecast import (
+    FORECAST_PREDICTION_COLUMNS,
+    FORECAST_SCHEMA_VERSION,
+    ForecastRun,
+    forecast_fixtures,
+    load_model_config,
+    load_selection_run_config,
+    run_forecast,
+)
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
@@ -21,9 +38,16 @@ from .selection import load_candidates, parse_validation_folds, run_nested_selec
 
 __all__ = [
     "DataValidationError",
+    "FIXTURE_COLUMNS",
+    "FIXTURE_REQUIRED_COLUMNS",
+    "FIXTURE_SCHEMA_VERSION",
+    "FORECAST_PREDICTION_COLUMNS",
+    "FORECAST_SCHEMA_VERSION",
     "DEFAULT_EPL_SEASONS",
     "EloModel",
+    "FixtureValidationError",
     "FrequencyModel",
+    "ForecastRun",
     "ModelRun",
     "PoissonModel",
     "REQUIRED_COLUMNS",
@@ -37,12 +61,17 @@ __all__ = [
     "download_epl",
     "evaluate_predictions",
     "file_sha256",
+    "forecast_fixtures",
+    "load_fixtures",
+    "load_model_config",
+    "load_selection_run_config",
     "load_matches",
     "load_candidates",
     "multiclass_ece",
     "parse_validation_folds",
     "reliability_table",
     "run_models",
+    "run_forecast",
     "run_walk_forward",
     "run_nested_selection",
     "normalize_season",
