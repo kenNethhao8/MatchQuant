@@ -1,4 +1,4 @@
-# MatchQuant M1–M7 — Research Engine
+# MatchQuant M1–M8 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -281,6 +281,31 @@ python -m matchquant settle `
 每次结算会新建唯一的 `m6_settlement_<UTC时间>_<唯一ID>` 目录，保存 `settlement.csv`、`metrics.json`、`run_config.json` 和中文 `settlement_report.md`。身份匹配严格使用 `season + home_team + away_team` 的去首尾空白原文本，不猜测球队别名、不做模糊匹配；唯一命中允许改期并标记 `same_date`/`date_changed`，零命中保留为预期的 `unresolved`，重复命中标记 `ambiguous`。结果早于预测 as-of 的行标记 `time_conflict`，不进入指标；唯一身份的改期结果仍可结算并标记 `date_changed`。`metrics.json` 只对安全结算子集计算 multiclass log loss、三分类 Brier 和 accuracy；零场结算时三项预测指标为 `null`，coverage 按安全结算数/总预测数为 `0`。结果输入仍需由用户通过既有 M2/M2.1 或其他明确的本地 canonical 文件自行获得，M6 本身不导入赛果。
 
 新生成的 M4 run 会在 `run_config.json` 中记录 `predictions.csv` 的 SHA-256；旧 M4 run 会明确记录 `unrecorded_legacy`，不会被 M6 偷改。M6 输出是离线研究审计，不是实时预测、投注建议、盈利承诺或未来表现保证。
+
+## M8：本地预测发布审计包
+
+M8 是 M4 本地预测快照的发布前可追溯性核验。它只读取用户显式指定的 M4 run、M2/M2.1 canonical history、processed manifest 和 M5 `fixture_snapshot_manifest.json`，不会下载、联网、调用 `epl-sync`/`epl-local-stage`/`epl-fixtures-prepare`，不会重跑 M4、重新选择模型、训练或校准。它也不会修改任何输入、`D:\Codex\matchquant_data\` 或 current pointer。
+
+```powershell
+python -m matchquant release-verify `
+  --forecast-run D:\Codex\matchquant_runs\m4_forecast_<...> `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --history-manifest D:\Codex\matchquant_data\processed\epl_processed_manifest.json `
+  --fixture-manifest D:\Codex\matchquant_data\fixtures\snapshots\epl_fixtures_<...>\fixture_snapshot_manifest.json `
+  --output-root D:\Codex\matchquant_runs
+```
+
+所有输入路径都必须显式给出；M8 不猜测“最新”文件，也不从默认目录隐式替换输入。每次成功调用只在 `--output-root`（默认 `D:\Codex\matchquant_runs`）下创建唯一的 `m8_release_<UTC>_<ID>` 目录，其中包含 `release_manifest.json` 和中文 `release_report.md`。M8 只链接原始 M4 `predictions.csv`，不复制预测文件、raw source 或第三方数据。`--output-root` 不能是 M4 run、M5 snapshot、输入目录或 `D:\Codex\matchquant_data` 下的路径。
+
+审计会严格核对：M6 对 M4 `run_config.json`、`predictions.csv`、schema 和 prediction SHA-256 的验证；M4 history/fixtures 的路径、hash、行数和 as-of；history manifest 的 output hash、行数、`data_cutoff`、`dataset_version`；M5 snapshot id、pending output、raw source/hash、quality report/hash、completed cutoff 和 pending 日期范围。历史 manifest 缺少 `dataset_version` 或 `data_cutoff` 时不会伪造值，最多为 `needs_review`；旧 M4 缺少 prediction hash 会保留 `unrecorded_legacy`，不能变成 `ready`；M4 已记录的 `history_hash_mismatch` 会原样保留为审计风险。
+
+状态含义如下：
+
+- `ready`：所有硬完整性和时间核验通过，并且没有 legacy prediction hash、selection mismatch 或缺失版本/cutoff 等需人工注意的证据；仍需用户做最终发布决定。
+- `needs_review`：没有已识别的硬矛盾，但存在需要人工注意的旧 hash、selection history mismatch 或不完整版本证据，不得直接发布。
+- `blocked`：关键 path、hash、rows、schema、raw/quality 自洽性或时间边界存在矛盾，或关键证据无法读取，不得发布。
+
+建议的手动顺序是：`M7` 或 `M2.1` 的可选历史更新（如确有需要）→ `M5 epl-fixtures-prepare` → `M4 forecast` → `M8 release-verify` → 后续 `M6 settle`。M8 不证明历史数据或赛程已“最新”，M5 的复制时间、文件日期范围和 source URL 也不证明实时性；它不代表实时预测、概率已校准、盈利能力或投注建议，不建立 source 文件的再分发授权。
 
 ## 三个模型
 

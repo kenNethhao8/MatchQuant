@@ -1,4 +1,4 @@
-"""MatchQuant M1-M7: deterministic football research and local forecasts."""
+"""MatchQuant M1-M8: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -59,6 +59,12 @@ from .settlement import (
     settle_forecast_run,
     settle_predictions,
 )
+from .release_verify import (
+    RELEASE_STATUSES,
+    RELEASE_VERIFY_SCHEMA_VERSION,
+    release_verify,
+    verify_release,
+)
 
 __all__ = [
     "DataValidationError",
@@ -84,6 +90,8 @@ __all__ = [
     "REQUIRED_COLUMNS",
     "SETTLEMENT_METRICS_SCHEMA_VERSION",
     "SETTLEMENT_SCHEMA_VERSION",
+    "RELEASE_STATUSES",
+    "RELEASE_VERIFY_SCHEMA_VERSION",
     "create_model",
     "audit_source_frame",
     "audit_sync_source_frame",
@@ -112,6 +120,8 @@ __all__ = [
     "run_nested_selection",
     "settle_forecast_run",
     "settle_predictions",
+    "release_verify",
+    "verify_release",
     "normalize_season",
     "prepare_epl",
     "prepare_epl_fixtures",

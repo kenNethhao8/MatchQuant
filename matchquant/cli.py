@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M6."""
+"""Command-line entry point for MatchQuant M1-M8."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from .models import MODEL_NAMES
 from .schema import DataValidationError
 from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
 from .settlement import settle_forecast_run
+from .release_verify import verify_release
 
 DEFAULT_M3_CANDIDATE_CONFIG = Path(__file__).resolve().parent.parent / "examples" / "m3_candidates.json"
 
@@ -145,6 +146,17 @@ def _parser() -> argparse.ArgumentParser:
         "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
         help="root for a new timestamped M6 settlement directory",
     )
+    release = subparsers.add_parser(
+        "release-verify", help="offline M8 audit of one explicit M4/M2/M5 evidence chain",
+    )
+    release.add_argument(
+        "--forecast-run", "--forecast-run-dir", dest="forecast_run", type=Path, required=True,
+        help="explicit completed M4 forecast run directory",
+    )
+    release.add_argument("--history", "--history-csv", dest="history", type=Path, required=True, help="explicit M2/M2.1 canonical history CSV")
+    release.add_argument("--history-manifest", type=Path, required=True, help="explicit M2/M2.1 processed manifest JSON")
+    release.add_argument("--fixture-manifest", "--fixture-snapshot-manifest", dest="fixture_manifest", type=Path, required=True, help="explicit M5 fixture_snapshot_manifest.json")
+    release.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"), help="root for one new timestamped M8 audit directory")
     return parser
 
 
@@ -497,6 +509,24 @@ def _settle(args: argparse.Namespace) -> int:
     return 2 if result["status"] == "needs_review" else 0
 
 
+def _release_verify(args: argparse.Namespace) -> int:
+    result = verify_release(
+        args.forecast_run,
+        args.history,
+        args.history_manifest,
+        args.fixture_manifest,
+        output_root=args.output_root,
+    )
+    print(f"MatchQuant M8 release verification {result['status']}")
+    print(f"release_dir={result['run_dir']}")
+    print(f"release_manifest={result['release_manifest_path']}")
+    print(f"release_report={result['release_report_path']}")
+    print(f"forecast_predictions={result['forecast_predictions_path']}")
+    counts = {status: sum(item["status"] == status for item in result["checks"]) for status in ("passed", "needs_review", "blocked")}
+    print(f"checks_passed={counts['passed']} needs_review={counts['needs_review']} blocked={counts['blocked']}")
+    return 0 if result["status"] == "ready" else 2
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -519,6 +549,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_epl_fixtures_prepare(args))
         if args.command == "settle":
             raise SystemExit(_settle(args))
+        if args.command == "release-verify":
+            raise SystemExit(_release_verify(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
