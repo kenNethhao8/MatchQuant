@@ -54,7 +54,6 @@ def _display_key(key: tuple[str, str, str]) -> str:
 
 
 def _result_time_issue(
-    prediction_date: pd.Timestamp,
     result: Any,
     as_of: pd.Timestamp,
     as_of_date_only: bool,
@@ -67,8 +66,6 @@ def _result_time_issue(
         return "result_date_only_overlaps_exact_as_of"
     elif result_date < as_of:
         return "result_before_forecast_as_of"
-    if result_date.normalize() < prediction_date.normalize():
-        return "result_before_forecast_fixture_date"
     return None
 
 
@@ -149,7 +146,7 @@ def settle_predictions(
             if result["_timestamp"].normalize() == prediction_date.normalize()
             else "date_changed"
         )
-        issue = _result_time_issue(prediction_date, result, as_of, as_of_date_only)
+        issue = _result_time_issue(result, as_of, as_of_date_only)
         if issue is not None:
             row["settlement_status"] = "time_conflict"
             row["reason"] = issue
@@ -298,7 +295,7 @@ def settle_forecast_run(
             "comparison": "exact trimmed source text; no aliases or fuzzy matching",
             "date_rule": "date may differ for a unique identity match; same_date/date_changed is recorded",
             "duplicate_rule": "more than one result for one identity is ambiguous and excluded from metrics",
-            "temporal_rule": "result before as_of or before the forecast fixture date is time_conflict and excluded",
+            "temporal_rule": "result before as_of is time_conflict and excluded; a unique date change is allowed",
         },
         "counts": counts,
         "metrics": metrics,

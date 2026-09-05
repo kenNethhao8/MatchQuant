@@ -48,7 +48,7 @@ def write_settlement_report(
         "- 身份键严格为 `season + home_team + away_team`；仅比较去除首尾空白后的原文本，不猜测别名，不做模糊匹配。",
         "- 唯一身份命中即使日期不同也可结算，并在逐场表中标记 `same_date` 或 `date_changed`。",
         "- 同一身份命中多条结果标为 `ambiguous`，不任意选择；零命中标为预期的 `unresolved`。",
-        "- 结果早于预测 as-of、或早于预测 fixture 日期的行标为 `time_conflict`，不纳入指标。",
+        "- 结果早于预测 as-of 的行标为 `time_conflict`，不纳入指标；唯一改期结果仍可按身份结算并标记 `date_changed`。",
         "",
         "## 结算状态与指标",
         "",

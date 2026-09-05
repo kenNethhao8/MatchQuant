@@ -234,7 +234,7 @@ python -m matchquant settle `
   --output-root D:\Codex\matchquant_runs
 ```
 
-每次结算会新建唯一的 `m6_settlement_<UTC时间>_<唯一ID>` 目录，保存 `settlement.csv`、`metrics.json`、`run_config.json` 和中文 `settlement_report.md`。身份匹配严格使用 `season + home_team + away_team` 的去首尾空白原文本，不猜测球队别名、不做模糊匹配；唯一命中允许改期并标记 `same_date`/`date_changed`，零命中保留为预期的 `unresolved`，重复命中标记 `ambiguous`。结果早于预测 as-of 或早于预测 fixture 日期的行标记 `time_conflict`，不进入指标。`metrics.json` 只对安全结算子集计算 multiclass log loss、三分类 Brier 和 accuracy；零场结算时三项预测指标为 `null`，coverage 按安全结算数/总预测数为 `0`。结果输入仍需由用户通过既有 M2/M2.1 或其他明确的本地 canonical 文件自行获得，M6 本身不导入赛果。
+每次结算会新建唯一的 `m6_settlement_<UTC时间>_<唯一ID>` 目录，保存 `settlement.csv`、`metrics.json`、`run_config.json` 和中文 `settlement_report.md`。身份匹配严格使用 `season + home_team + away_team` 的去首尾空白原文本，不猜测球队别名、不做模糊匹配；唯一命中允许改期并标记 `same_date`/`date_changed`，零命中保留为预期的 `unresolved`，重复命中标记 `ambiguous`。结果早于预测 as-of 的行标记 `time_conflict`，不进入指标；唯一身份的改期结果仍可结算并标记 `date_changed`。`metrics.json` 只对安全结算子集计算 multiclass log loss、三分类 Brier 和 accuracy；零场结算时三项预测指标为 `null`，coverage 按安全结算数/总预测数为 `0`。结果输入仍需由用户通过既有 M2/M2.1 或其他明确的本地 canonical 文件自行获得，M6 本身不导入赛果。
 
 新生成的 M4 run 会在 `run_config.json` 中记录 `predictions.csv` 的 SHA-256；旧 M4 run 会明确记录 `unrecorded_legacy`，不会被 M6 偷改。M6 输出是离线研究审计，不是实时预测、投注建议、盈利承诺或未来表现保证。
 

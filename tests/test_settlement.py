@@ -115,7 +115,7 @@ class SettlementTests(unittest.TestCase):
             self.assertEqual(row["date_status"], "date_changed")
             self.assertEqual(row["actual_result"], "H")
 
-    def test_as_of_and_fixture_date_conflicts_are_not_scored(self):
+    def test_as_of_conflict_and_earlier_reschedule_are_handled_safely(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             before_as_of = self._rows("m008")
@@ -127,12 +127,15 @@ class SettlementTests(unittest.TestCase):
             self.assertEqual(row["actual_result"], "H")
             self.assertIsNone(result["metrics"]["log_loss"])
 
-            fixture_conflict = self._rows("m010")
-            fixture_conflict.loc[:, "date"] = "2024-01-07"
-            result = self._settle(root / "fixture", fixture_conflict)
+            earlier_reschedule = self._rows("m010")
+            earlier_reschedule.loc[:, "date"] = "2024-01-07"
+            result = self._settle(root / "earlier", earlier_reschedule)
             row = result["settlement"].loc[result["settlement"]["fixture_id"].eq("f003")].iloc[0]
-            self.assertEqual(row["settlement_status"], "time_conflict")
-            self.assertEqual(row["reason"], "result_before_forecast_fixture_date")
+            self.assertEqual(row["settlement_status"], "settled")
+            self.assertEqual(row["reason"], "unique_exact_identity_match")
+            self.assertEqual(row["date_status"], "date_changed")
+            self.assertEqual(row["actual_result"], "D")
+            self.assertIsNotNone(result["metrics"]["log_loss"])
 
     def test_legacy_hash_evidence_is_explicit(self):
         with tempfile.TemporaryDirectory() as temporary:
