@@ -297,7 +297,7 @@ python -m matchquant release-verify `
 
 所有输入路径都必须显式给出；M8 不猜测“最新”文件，也不从默认目录隐式替换输入。每次成功调用只在 `--output-root`（默认 `D:\Codex\matchquant_runs`）下创建唯一的 `m8_release_<UTC>_<ID>` 目录，其中包含 `release_manifest.json` 和中文 `release_report.md`。M8 只链接原始 M4 `predictions.csv`，不复制预测文件、raw source 或第三方数据。`--output-root` 不能是 M4 run、M5 snapshot、输入目录或 `D:\Codex\matchquant_data` 下的路径。
 
-审计会严格核对：M6 对 M4 `run_config.json`、`predictions.csv`、schema 和 prediction SHA-256 的验证；M4 history/fixtures 的路径、hash、行数和 as-of；history manifest 的 output hash、行数、`data_cutoff`、`dataset_version`；M5 snapshot id、pending output、raw source/hash、quality report/hash、completed cutoff 和 pending 日期范围。历史 manifest 缺少 `dataset_version` 或 `data_cutoff` 时不会伪造值，最多为 `needs_review`；旧 M4 缺少 prediction hash 会保留 `unrecorded_legacy`，不能变成 `ready`；M4 已记录的 `history_hash_mismatch` 会原样保留为审计风险。
+审计会严格核对：M6 对 M4 `run_config.json`、`predictions.csv`、schema 和 prediction SHA-256 的验证；M4 history/fixtures 的路径、hash、行数和 as-of；history manifest 的 output hash、行数、`data_cutoff`、`dataset_version`；M5 snapshot id、pending output、raw source/hash、quality report/hash、completed cutoff 和 pending 日期范围。历史 manifest 缺少 `dataset_version` 或 `data_cutoff` 时不会伪造值，最多为 `needs_review`；旧 M4 缺少 prediction hash 会保留 `unrecorded_legacy`，不能变成 `ready`；M4 已记录的 `history_hash_mismatch` 会原样保留为审计风险。若 M5 `completed_data_cutoff` 与 M4 date-only as-of 同日或更晚，或精确 as-of 落在同一无时刻日期/之后，M8 只标记 `needs_review`，不把它误称为模型泄漏；selection evidence 缺 hash 为 `needs_review`，非 64 位或与文件实际 hash 不一致则为 `blocked`。
 
 状态含义如下：
 

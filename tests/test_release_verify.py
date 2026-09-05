@@ -16,9 +16,11 @@ class ReleaseVerifyTests(unittest.TestCase):
     history_path = Path("examples/synthetic_matches.csv").resolve()
     source_path = Path("examples/synthetic_e0_source.csv").resolve()
 
-    def _build(self, root: Path, *, selection_mismatch: bool = False) -> dict[str, Path]:
+    def _build(self, root: Path, *, selection_mismatch: bool = False, completed_date: str = "06/01/2024") -> dict[str, Path]:
         data_root = root / "fixture-data"
-        m5 = prepare_epl_fixtures(self.source_path, "2024-25", data_root)
+        source_path = root / "synthetic_e0_source.csv"
+        source_path.write_text(self.source_path.read_text(encoding="utf-8").replace("08/01/2024,B,C,1,0", f"{completed_date},B,C,1,0"), encoding="utf-8")
+        m5 = prepare_epl_fixtures(source_path, "2024-25", data_root)
         model_path = root / "frequency.json"
         model_path.write_text('{"alpha": 1.0}\n', encoding="utf-8")
         fixture_path = Path(m5["fixture_path"])
@@ -165,6 +167,41 @@ class ReleaseVerifyTests(unittest.TestCase):
             result = verify_release(paths["forecast"], paths["history"], paths["history_manifest"], paths["fixture_manifest"], output_root=root / "m8-runs")
             self.assertEqual(result["status"], "needs_review")
             self.assertIn("dataset_version", " ".join(next(item for item in result["checks"] if item["id"] == "history_manifest_metadata")["reasons"]))
+
+    def test_completed_cutoff_at_or_after_as_of_needs_review(self):
+        for completed_date, relation in (("07/01/2024", "same_date_unresolved"), ("08/01/2024", "after_or_equal")):
+            with self.subTest(completed_date=completed_date), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                paths = self._build(root, completed_date=completed_date)
+                result = verify_release(paths["forecast"], paths["history"], paths["history_manifest"], paths["fixture_manifest"], output_root=root / "m8-runs")
+                self.assertEqual(result["status"], "needs_review")
+                check = next(item for item in result["checks"] if item["id"] == "time_boundary_crosscheck")
+                self.assertEqual(check["status"], "needs_review")
+                self.assertEqual(check["evidence"]["fixtures"]["completed_cutoff_relation_to_as_of"], relation)
+                self.assertTrue(any("不等同于模型发生泄漏" in reason for reason in check["reasons"]))
+
+    def test_explicit_selection_hash_missing_or_mismatch_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self._build(root)
+            config_path = paths["forecast"] / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["selection"].pop("sha256")
+            write_json(config, config_path)
+            result = verify_release(paths["forecast"], paths["history"], paths["history_manifest"], paths["fixture_manifest"], output_root=root / "missing-hash")
+            self.assertEqual(result["status"], "needs_review")
+            self.assertEqual(next(item for item in result["checks"] if item["id"] == "selection_evidence")["status"], "needs_review")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self._build(root)
+            config_path = paths["forecast"] / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["selection"]["sha256"] = "0" * 64
+            write_json(config, config_path)
+            result = verify_release(paths["forecast"], paths["history"], paths["history_manifest"], paths["fixture_manifest"], output_root=root / "mismatch-hash")
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(next(item for item in result["checks"] if item["id"] == "selection_evidence")["status"], "blocked")
 
     def test_m4_output_reference_and_malformed_quality_are_blocked(self):
         with tempfile.TemporaryDirectory() as temporary:

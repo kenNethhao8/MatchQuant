@@ -105,7 +105,6 @@ def _recorded_prediction_hash(config: Mapping[str, Any]) -> str | None:
         raise DataValidationError("M4 predictions SHA-256 evidence is invalid or fields disagree")
     return hashes[0] if hashes else None
 
-
 def _m4_artifact_reference(forecast: dict[str, Any]) -> dict[str, Any]:
     outputs = forecast["config"].get("outputs")
     if not isinstance(outputs, Mapping):
@@ -226,13 +225,19 @@ def _time_check(forecast: dict[str, Any] | None, history: pd.DataFrame | None, f
     if not isinstance(pending_range, Mapping) or dict(pending_range) != actual_range:
         reasons.append("M5 pending_date_range 与实际 fixture 日期范围不一致")
     completed_cutoff = quality.get("completed_data_cutoff")
+    review: list[str] = []
     relation = "before_or_unknown"
     if completed_cutoff not in (None, ""):
         try:
-            relation = "after_or_equal" if _timestamp(completed_cutoff) >= as_of else "before"
+            cutoff_date, as_of_date = _timestamp(completed_cutoff).normalize(), as_of.normalize()
+            if cutoff_date >= as_of_date:
+                relation = "after_or_equal" if cutoff_date > as_of_date else "same_date_unresolved"
+                review.append("M5 completed_data_cutoff 与 M4 as-of 同日或更晚，M5 仅记录 date-only 完成时间，无法确认时序；这是发布复核风险，不等同于模型发生泄漏")
+            else:
+                relation = "before"
         except (TypeError, ValueError):
             reasons.append(f"M5 completed_data_cutoff 不是可比较日期: {completed_cutoff!r}")
-    return _check("time_boundary_crosscheck", "blocked" if reasons else "passed", "M4 as-of、实际 history cutoff/rows-used、M5 日期范围已交叉核对", reasons, as_of=forecast["as_of_meta"], history={"rows_total": len(timeline), "rows_used_actual": actual_used, "rows_used_declared": declared.get("rows_used_before_as_of"), "cutoff_actual": actual_cutoff, "cutoff_declared": declared.get("data_cutoff"), "manifest_cutoff": history_info.get("data_cutoff")}, fixtures={"pending_date_range": dict(pending_range) if isinstance(pending_range, Mapping) else pending_range, "actual_date_range": actual_range, "completed_data_cutoff": completed_cutoff, "completed_cutoff_relation_to_as_of": relation}, chronology_note="history cutoff 在 as-of 之前只证明本次 replay 使用边界，不证明历史数据已最新")
+    return _check("time_boundary_crosscheck", "blocked" if reasons else "needs_review" if review else "passed", "M4 as-of、实际 history cutoff/rows-used、M5 日期范围已交叉核对", reasons + review, as_of=forecast["as_of_meta"], history={"rows_total": len(timeline), "rows_used_actual": actual_used, "rows_used_declared": declared.get("rows_used_before_as_of"), "cutoff_actual": actual_cutoff, "cutoff_declared": declared.get("data_cutoff"), "manifest_cutoff": history_info.get("data_cutoff")}, fixtures={"pending_date_range": dict(pending_range) if isinstance(pending_range, Mapping) else pending_range, "actual_date_range": actual_range, "completed_data_cutoff": completed_cutoff, "completed_cutoff_relation_to_as_of": relation}, chronology_note="history cutoff 在 as-of 之前只证明本次 replay 使用边界，不证明历史数据已最新；M5 completed cutoff 同日或更晚且仅有 date-only 语义时保留为 needs_review，不据此断言模型泄漏")
 
 
 def _selection_check(forecast: dict[str, Any] | None, history_hash: str | None) -> dict[str, Any]:
@@ -272,11 +277,16 @@ def _selection_check(forecast: dict[str, Any] | None, history_hash: str | None) 
     else:
         reasons.append(f"未知 selection mode: {mode!r}")
     evidence_path = _path(selection.get("path"), forecast["run_dir"])
+    recorded_hash = selection.get("sha256")
+    if recorded_hash is None:
+        review.append("selection evidence SHA-256 缺失；M8 不把该证据标为 ready")
+    elif not _valid_hash(recorded_hash):
+        reasons.append("selection evidence SHA-256 不是 64 位 SHA-256")
     if evidence_path is None or not evidence_path.is_file():
         review.append("selection evidence 原文件不可用；M8 保留 M4 已记录状态，不重新选择模型")
-    elif selection.get("sha256") is not None:
+    elif recorded_hash is not None and _valid_hash(recorded_hash):
         try:
-            if not _valid_hash(selection.get("sha256")) or file_sha256(evidence_path).lower() != str(selection["sha256"]).lower():
+            if file_sha256(evidence_path).lower() != str(recorded_hash).lower():
                 reasons.append("selection evidence 文件实际 hash 与 M4 记录不一致")
         except OSError as exc:
             reasons.append(f"selection evidence 文件无法读取: {exc}")
