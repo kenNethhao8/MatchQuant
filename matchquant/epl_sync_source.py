@@ -107,8 +107,6 @@ def _normalise_in_progress_season(value: str | None) -> str | None:
 
 def _season_policy(season: str, in_progress_season: str | None) -> dict[str, Any]:
     declared = _normalise_in_progress_season(in_progress_season)
-    if declared is not None and declared != season:
-        raise ValueError(f"in-progress season {declared} must match requested season {season}")
     is_in_progress = declared == season
     return {
         "in_progress_season": declared,

@@ -18,6 +18,11 @@ def source_frame(rows):
     return pd.DataFrame(rows, columns=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"])
 
 
+def complete_source_frame(start="2014-08-01"):
+    dates = pd.date_range(start, periods=380, freq="D").strftime("%d/%m/%Y")
+    return source_frame([[date, f"Home{index}", f"Away{index}", "1", "0"] for index, date in enumerate(dates)])
+
+
 def baseline_rows():
     return source_frame(
         [
@@ -165,6 +170,40 @@ class EplSyncTests(unittest.TestCase):
                 sync_epl(staging_dir=stage, data_dir=root, in_progress_season="2024-25")
             self.assertFalse((root / "processed" / "epl_current.json").exists())
             self.assertFalse((root / "processed" / "versions").exists())
+
+    def test_multi_season_gap_fill_applies_policy_per_season(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_baseline(root)
+            complete_body = complete_source_frame("2024-08-01").to_csv(index=False).encode("utf-8")
+            in_progress_body = source_frame(
+                [["01/08/2025", "Delta", "Epsilon", "1", "0"], ["02/08/2025", "Epsilon", "Zeta", "", ""]]
+            ).to_csv(index=False).encode("utf-8")
+            with patch(
+                "matchquant.epl_sync_source.urllib.request.urlopen",
+                side_effect=[FakeResponse(complete_body), FakeResponse(in_progress_body)],
+            ) as mocked:
+                result = sync_epl(
+                    seasons=["2024-25", "2025-26"],
+                    data_dir=root,
+                    in_progress_season="2025-26",
+                )
+            self.assertEqual(mocked.call_count, 2)
+            self.assertEqual(result["status"], "dry-run")
+            self.assertEqual(result["diff"]["added"], 381)
+            self.assertTrue(result["strict_380_gate_applied_by_season"]["2024-25"])
+            self.assertFalse(result["strict_380_gate_applied_by_season"]["2025-26"])
+            source_manifest = json.loads((Path(result["staging_dir"]) / "raw" / "source_manifest.json").read_text(encoding="utf-8"))
+            for path in (
+                Path(result["quality_report_path"]),
+                Path(result["diff_report_path"]),
+                Path(result["processed_manifest_path"]),
+            ):
+                evidence = json.loads(path.read_text(encoding="utf-8"))
+                self.assertTrue(evidence["season_policy"]["2024-25"]["strict_380_gate_applied"])
+                self.assertFalse(evidence["season_policy"]["2025-26"]["strict_380_gate_applied"])
+            self.assertTrue(source_manifest["season_policy"]["2024-25"]["strict_380_gate_applied"])
+            self.assertFalse(source_manifest["season_policy"]["2025-26"]["strict_380_gate_applied"])
 
     def test_partial_score_fails_and_writes_quality_report(self):
         with tempfile.TemporaryDirectory() as temporary:
