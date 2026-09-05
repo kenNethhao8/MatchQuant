@@ -1,4 +1,4 @@
-"""MatchQuant M1-M4: deterministic football research and local forecasts."""
+"""MatchQuant M1-M5: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -13,6 +13,18 @@ from .epl import (
     stable_match_id,
 )
 from .epl_sync import audit_sync_source_frame, compare_canonical, convert_sync_source_frame, sync_epl
+from .epl_fixtures import (
+    FIXTURE_ADAPTER_VERSION,
+    FIXTURE_DIFF_VERSION,
+    FIXTURE_MANIFEST_VERSION,
+    FIXTURE_QUALITY_VERSION,
+    FIXTURE_SOURCE_REQUIRED_COLUMNS,
+    audit_fixture_source_frame,
+    compare_fixtures,
+    convert_fixture_source_frame,
+    prepare_epl_fixtures,
+    stable_fixture_id,
+)
 from .fixtures import (
     FIXTURE_COLUMNS,
     FIXTURE_REQUIRED_COLUMNS,
@@ -44,6 +56,11 @@ __all__ = [
     "FORECAST_PREDICTION_COLUMNS",
     "FORECAST_SCHEMA_VERSION",
     "DEFAULT_EPL_SEASONS",
+    "FIXTURE_ADAPTER_VERSION",
+    "FIXTURE_DIFF_VERSION",
+    "FIXTURE_MANIFEST_VERSION",
+    "FIXTURE_QUALITY_VERSION",
+    "FIXTURE_SOURCE_REQUIRED_COLUMNS",
     "EloModel",
     "FixtureValidationError",
     "FrequencyModel",
@@ -56,8 +73,10 @@ __all__ = [
     "audit_sync_source_frame",
     "calibration_diagnostics",
     "compare_canonical",
+    "compare_fixtures",
     "convert_source_frame",
     "convert_sync_source_frame",
+    "convert_fixture_source_frame",
     "download_epl",
     "evaluate_predictions",
     "file_sha256",
@@ -76,8 +95,10 @@ __all__ = [
     "run_nested_selection",
     "normalize_season",
     "prepare_epl",
+    "prepare_epl_fixtures",
     "source_url",
     "stable_match_id",
+    "stable_fixture_id",
     "sync_epl",
     "validate_matches",
     "write_json",

@@ -1,4 +1,4 @@
-# MatchQuant M1–M4 — Research Engine
+# MatchQuant M1–M5 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -171,6 +171,39 @@ python -m matchquant forecast `
 
 M4 输出是本地研究快照，不是当前实时赛程预测。概率经过有限、非负、和为 1 的合法性检查，但没有因此声明已经校准；没有外部赔率、阵容/伤停/新闻、机器学习、实时服务、数据库或自动调度，也不构成投注建议、盈利承诺或未来表现保证。若需要真实历史时点 replay，应在 `D:\Codex\matchquant_runs\` 临时生成无比分 fixture 输入，并在记录中明确 as-of 和输入 hash；它仍不是当前实时赛程预测。
 
+## M5：本地英超赛程快照接入
+
+M5 只接受用户明确传入的本地 Football-Data.co.uk `E0` 兼容 CSV。它不下载、不联网、不更新 `D:\Codex\matchquant_data\processed\epl_canonical.csv`、`epl_current.json` 或任何 active/current fixture pointer；完成赛果也不会自动写入 M2/M2.1 历史数据。仓库内的 [`examples/synthetic_e0_source.csv`](examples/synthetic_e0_source.csv) 只是小型合成测试输入，不代表当前英超赛程。
+
+手动闭环如下：
+
+1. 用户在本地下载或导出一个明确的 E0 风格 CSV，确认至少有 `Date,HomeTeam,AwayTeam,FTHG,FTAG`。M5 不检查网络可达性，也不把文件名推断为 URL；`--source-url` 或 `--source-label` 只有在用户明确提供时才写入 provenance。
+2. 用显式赛季创建不可变 snapshot：
+
+   ```powershell
+   python -m matchquant epl-fixtures-prepare `
+     --source-csv D:\Codex\my_input\E0.csv `
+     --season 2025-26 `
+     --source-label "local Football-Data E0 export" `
+     --data-root D:\Codex\matchquant_data
+   ```
+
+   每次调用都会在 `D:\Codex\matchquant_data\fixtures\snapshots\` 新建唯一目录，复制原始 bytes、计算 SHA-256，并保存 manifest、质量报告和（仅当有合法 pending 行时）`processed\epl_fixtures.csv`。snapshot 记录输入路径、赛季、日期范围、数据 cutoff、行分类和版本；raw copy 是只读快照且不被覆盖。两个比分均为空才是 pending；两个比分均有效的 completed 行只进入质量证据。部分比分、坏日期/球队/比分、重复 stable fixture ID 和同 fixture 冲突会失败且不产生 fixture canonical。没有 pending 时状态为 `no_pending_fixtures`，只留证据，也不生成空 CSV。
+3. 如果需要版本观察，可额外传入 `--baseline-fixtures`。M5 只按 `fixture_id` 报告 `added`、`unchanged`、`revised`、`missing_from_candidate`；baseline 缺失可能是已完成、取消或源缺失，报告会要求人工判断。M5 不删除 baseline、不 apply、不更新指针。
+4. 人工明确选择 history、M3 selection evidence 或显式 model config，以及本次 `as-of`。然后把 M5 生成的 `processed\epl_fixtures.csv` 作为 M4 的 `--fixtures`：
+
+   ```powershell
+   python -m matchquant forecast `
+     --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+     --fixtures D:\Codex\matchquant_data\fixtures\snapshots\epl_fixtures_<...>\processed\epl_fixtures.csv `
+     --as-of 2025-08-01 `
+     --model poisson `
+     --model-config examples\forecast_poisson.json `
+     --output-root D:\Codex\matchquant_runs
+   ```
+
+   M4 仍只读显式本地文件；fixture 与 results schema 保持分离，预测运行另存自己的输入 hash、as-of 和报告。每一步都可从 raw snapshot、manifest、质量/差异报告和 M4 run config 审计。snapshot 的日期范围和本地版本不等于实时或完整赛程，也不证明来源具有再分发授权。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -219,4 +252,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断与本地 Alpha 快照不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断与本地 Alpha 快照不等于未来表现、盈利、投注价值或投注建议。

@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1/M2."""
+"""Command-line entry point for MatchQuant M1-M5."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pandas as pd
 
 from .backtest import run_models
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
+from .epl_fixtures import prepare_epl_fixtures
 from .epl_sync import sync_epl
 from .forecast import run_forecast
 from .io import file_sha256, load_matches, write_json, write_predictions
@@ -97,6 +98,20 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--current-pointer", type=Path, help="optional current pointer path")
     sync.add_argument("--in-progress-season", help="explicitly allow an incomplete requested season, such as 2025-26")
     sync.add_argument("--timeout", type=float, default=30.0)
+    fixture_prepare = subparsers.add_parser(
+        "epl-fixtures-prepare",
+        help="offline-copy and normalize one local Football-Data E0 fixture source",
+    )
+    fixture_prepare.add_argument("--source-csv", type=Path, required=True, help="explicit local E0-compatible CSV")
+    fixture_prepare.add_argument("--season", required=True, help="explicit season such as 2025-26")
+    fixture_prepare.add_argument("--source-url", help="optional URL recorded as provenance only; no network access")
+    fixture_prepare.add_argument("--source-label", help="optional human-readable provenance label")
+    fixture_prepare.add_argument("--baseline-fixtures", type=Path, help="optional local M4 fixture CSV for report-only diff")
+    fixture_prepare.add_argument(
+        "--data-root", "--data-dir", dest="data_root", type=Path,
+        default=Path(r"D:\Codex\matchquant_data"),
+        help="root for immutable fixture snapshots",
+    )
     return parser
 
 
@@ -388,6 +403,33 @@ def _epl_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _epl_fixtures_prepare(args: argparse.Namespace) -> int:
+    result = prepare_epl_fixtures(
+        args.source_csv,
+        args.season,
+        args.data_root,
+        source_url=args.source_url,
+        source_label=args.source_label,
+        baseline_fixtures=args.baseline_fixtures,
+    )
+    counts = result["counts"]
+    print(f"MatchQuant M5 EPL fixture snapshot {result['status']}")
+    print(f"snapshot={result['snapshot_dir']}")
+    print(f"source_sha256={result['source_sha256']}")
+    print(
+        "pending={pending_rows} completed={completed_rows} partial={partial_score_rows} invalid={invalid_rows}".format(
+            **counts
+        )
+    )
+    if result["fixture_path"]:
+        print(f"fixtures={result['fixture_path']}")
+    print(f"manifest={result['manifest_path']}")
+    print(f"quality_report={result['quality_report_path']}")
+    if result["diff_report_path"]:
+        print(f"diff_report={result['diff_report_path']}")
+    return 2 if result["status"] == "no_pending_fixtures" else 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -404,6 +446,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_epl_prepare(args))
         if args.command == "epl-sync":
             raise SystemExit(_epl_sync(args))
+        if args.command == "epl-fixtures-prepare":
+            raise SystemExit(_epl_fixtures_prepare(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
