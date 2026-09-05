@@ -126,7 +126,7 @@ M7 manifest 会明确标记 `status=unverified` 和 `validation_status=unverifie
      --data-dir D:\Codex\matchquant_data
    ```
 
-   若确实知道上游获取时间，可额外传 `--upstream-retrieved-at 2026-09-05T08:30:00Z`；不要把文件复制时间填到这个字段。M7 成功只代表 raw bytes 已封存，尚未代表 CSV 合法。
+   若确实知道上游获取时间，可额外传 `--upstream-retrieved-at 2026-09-05T08:30:00Z`；该值必须是带时区的 ISO-8601 时间，系统会统一保存为 UTC `Z` 格式，不能把文件复制时间填到这个字段。M7 成功只代表 raw bytes 已封存，尚未代表 CSV 合法。
 3. 把命令输出的 snapshot 路径交给现有 M2.1，完全离线生成质量和差异报告：
 
    ```powershell

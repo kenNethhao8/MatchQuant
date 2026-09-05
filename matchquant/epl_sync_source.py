@@ -49,6 +49,25 @@ def manifest_source_urls(manifest: dict[str, Any]) -> list[str]:
     return [str(value) for value in values if isinstance(value, str) and value.strip()]
 
 
+def manifest_entry_provenance(entry: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    """Keep per-file provenance while allowing legacy top-level metadata fallback."""
+    fields = ("source_label", "source_type", "upstream_retrieved_at", "upstream_retrieved_at_status")
+    return {field: entry.get(field) if entry.get(field) is not None else manifest.get(field) for field in fields}
+
+
+def manifest_provenance(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return versionable source provenance from a staging manifest."""
+    entries = [entry for entry in manifest.get("files", []) if isinstance(entry, dict)]
+    first = entries[0] if entries else {}
+    values = manifest_entry_provenance(first, manifest)
+    values["upstream_retrieved_at"] = [
+        item["upstream_retrieved_at"]
+        for item in (manifest_entry_provenance(entry, manifest) for entry in entries)
+        if item.get("upstream_retrieved_at")
+    ]
+    return values
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

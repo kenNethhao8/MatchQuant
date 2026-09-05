@@ -26,7 +26,7 @@ from .epl_sync_source import (
     audit_sync_source_frame,
     compare_canonical,
     convert_sync_source_frame,
-    manifest_source_urls,
+    manifest_entry_provenance, manifest_provenance, manifest_source_urls,
 )
 from .io import file_sha256, load_matches, write_json
 from .schema import DataValidationError, validate_matches
@@ -143,7 +143,7 @@ def _quality_report(
         "source_manifest_sha256": file_sha256(snapshot / "raw" / "source_manifest.json"),
         "source": manifest.get("source"),
         "competition": manifest.get("competition"),
-        "division": manifest.get("division"),
+        "division": manifest.get("division"), **manifest_provenance(manifest),
         "snapshot_id": manifest.get("snapshot_id", snapshot.name),
         "generated_at": _utc_now(),
         "requested_seasons": list(selected),
@@ -211,7 +211,7 @@ def _write_stage_outputs(
                 raise DataValidationError(f"raw SHA-256 mismatch: manifest={entry.get('sha256')} actual={actual_hash}")
             source = read_source_csv(raw_path)
             report, converted = _analyse_source(source, season, in_progress_season)
-            report.update(raw_filename=filename, source_url=entry.get("url"), retrieved_at=entry.get("retrieved_at"), raw_sha256=actual_hash)
+            report.update(raw_filename=filename, source_url=entry.get("url"), retrieved_at=entry.get("retrieved_at"), raw_sha256=actual_hash, **manifest_entry_provenance(entry, manifest))
             reports.append(report)
             if report["status"] == "failed" or converted is None:
                 errors.append(f"{season}: {_source_error(report)}")
@@ -261,7 +261,7 @@ def _write_stage_outputs(
         "mode": "apply" if apply_requested else "dry-run",
         "source": manifest.get("source"),
         "competition": manifest.get("competition"),
-        "division": manifest.get("division"),
+        "division": manifest.get("division"), **manifest_provenance(manifest),
         "source_urls": manifest_source_urls(manifest),
         "retrieved_at": [entry.get("retrieved_at") for entry in entries if entry.get("retrieved_at")],
         "requested_seasons": list(selected),
@@ -304,8 +304,8 @@ def _write_stage_outputs(
         "season_policy": quality["season_policy"],
         "strict_380_gate_applied_by_season": quality["strict_380_gate_applied_by_season"],
         "seasons": sorted(str(value) for value in candidate["season"].unique()),
-        "data_cutoff": _cutoff(candidate),
-        "inputs": [{"season": report["season"], "raw_filename": report.get("raw_filename"), "url": report.get("source_url"), "source_label": report.get("source_label"), "source_type": report.get("source_type"), "upstream_retrieved_at": report.get("upstream_retrieved_at"), "sha256": report.get("raw_sha256")} for report in reports],
+        "data_cutoff": _cutoff(candidate), **manifest_provenance(manifest),
+        "inputs": [{"season": report["season"], "raw_filename": report.get("raw_filename"), "url": report.get("source_url"), "source_label": report.get("source_label"), "source_type": report.get("source_type"), "upstream_retrieved_at": report.get("upstream_retrieved_at"), "upstream_retrieved_at_status": report.get("upstream_retrieved_at_status"), "sha256": report.get("raw_sha256")} for report in reports],
         "baseline": {"version": baseline_meta["version"], "canonical_sha256": baseline_meta["canonical_sha256"]},
         "output": {"filename": str(candidate_path), "sha256": candidate_hash, "rows": int(len(candidate)), "columns": list(CANONICAL_COLUMNS)},
         "quality_report": str(quality_path),

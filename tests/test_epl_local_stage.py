@@ -94,6 +94,24 @@ class LocalEplStageTests(unittest.TestCase):
             self.assertEqual(manifest["upstream_retrieved_at_status"], "unknown")
             self.assertIsNone(manifest["files"][0]["retrieved_at"])
 
+    def test_upstream_timestamp_requires_timezone_and_normalizes_to_utc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "E0.csv"
+            source.write_text("Date,HomeTeam,AwayTeam,FTHG,FTAG\n01/08/2025,A,B,1,0\n", encoding="utf-8")
+            result = stage_local_epl_source(
+                source,
+                "2025-26",
+                root / "normalized",
+                upstream_retrieved_at="2026-09-05T16:30:00+08:00",
+            )
+            manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["upstream_retrieved_at"], "2026-09-05T08:30:00Z")
+            self.assertEqual(manifest["files"][0]["retrieved_at"], "2026-09-05T08:30:00Z")
+            for value in ("2026-09-05", "2026-09-05T16:30:00", "not-a-timestamp"):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "timezone-aware ISO-8601"):
+                    stage_local_epl_source(source, "2025-26", root / f"invalid-{value[:4]}", upstream_retrieved_at=value)
+
     def test_missing_file_leaves_failure_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -132,8 +150,13 @@ class LocalEplStageTests(unittest.TestCase):
             self.assertEqual(result["source_urls"], [])
             quality = json.loads(Path(result["quality_report_path"]).read_text(encoding="utf-8"))
             diff = json.loads(Path(result["diff_report_path"]).read_text(encoding="utf-8"))
+            processed = json.loads(Path(result["processed_manifest_path"]).read_text(encoding="utf-8"))
             self.assertEqual(quality["source_urls"], [])
             self.assertEqual(diff["source_urls"], [])
+            self.assertEqual(quality["upstream_retrieved_at"], [])
+            self.assertEqual(diff["upstream_retrieved_at"], [])
+            self.assertIsNone(processed["inputs"][0]["upstream_retrieved_at"])
+            self.assertEqual(processed["inputs"][0]["upstream_retrieved_at_status"], "unknown")
             self.assertEqual(diff["details"]["skipped_unfinished"][0]["reason"], "both full-time score fields are empty")
             self.assertFalse((root / "processed" / "epl_current.json").exists())
             self.assertFalse((root / "processed" / "versions").exists())
@@ -204,6 +227,43 @@ class LocalEplStageTests(unittest.TestCase):
             self.assertEqual(applied["status"], "applied")
             self.assertTrue(Path(applied["pointer_path"]).is_file())
             self.assertTrue(Path(applied["version_dir"]).is_dir())
+
+    def test_sync_preserves_local_provenance_in_reports_and_version_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_baseline(root)
+            source = root / "local.csv"
+            source.write_text("Date,HomeTeam,AwayTeam,FTHG,FTAG\n01/08/2025,A,B,1,0\n", encoding="utf-8")
+            staged = stage_local_epl_source(
+                source,
+                "2025-26",
+                root,
+                source_url="https://example.invalid/local.csv",
+                source_label="manual result export",
+                upstream_retrieved_at="2026-09-05T16:30:00+08:00",
+            )
+            dry_run = sync_epl(staging_dir=staged["snapshot_dir"], data_dir=root, in_progress_season="2025-26")
+            processed = json.loads(Path(dry_run["processed_manifest_path"]).read_text(encoding="utf-8"))
+            quality = json.loads(Path(dry_run["quality_report_path"]).read_text(encoding="utf-8"))
+            diff = json.loads(Path(dry_run["diff_report_path"]).read_text(encoding="utf-8"))
+            expected_time = "2026-09-05T08:30:00Z"
+            for evidence in (processed, quality, diff):
+                self.assertEqual(evidence["source_label"], "manual result export")
+                self.assertEqual(evidence["source_type"], "local_file")
+                self.assertEqual(evidence["upstream_retrieved_at"], [expected_time])
+            season = quality["seasons"][0]
+            self.assertEqual(season["source_label"], "manual result export")
+            self.assertEqual(season["source_type"], "local_file")
+            self.assertEqual(season["upstream_retrieved_at"], expected_time)
+            input_record = processed["inputs"][0]
+            self.assertEqual(input_record["source_label"], "manual result export")
+            self.assertEqual(input_record["source_type"], "local_file")
+            self.assertEqual(input_record["upstream_retrieved_at"], expected_time)
+            applied = sync_epl(staging_dir=staged["snapshot_dir"], data_dir=root, apply=True, in_progress_season="2025-26")
+            version = json.loads(Path(applied["version_manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(version["inputs"][0]["source_label"], "manual result export")
+            self.assertEqual(version["inputs"][0]["source_type"], "local_file")
+            self.assertEqual(version["inputs"][0]["upstream_retrieved_at"], expected_time)
 
     def test_cli_chain_smoke_is_concise(self):
         with tempfile.TemporaryDirectory() as temporary:

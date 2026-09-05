@@ -26,6 +26,22 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _normalise_upstream_retrieved_at(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or "T" not in text.upper():
+        raise ValueError("upstream_retrieved_at must be a timezone-aware ISO-8601 timestamp")
+    candidate = text[:-1] + "+00:00" if text[-1:].upper() == "Z" else text
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError("upstream_retrieved_at must be a timezone-aware ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("upstream_retrieved_at must be a timezone-aware ISO-8601 timestamp")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _snapshot(root: Path) -> Path:
     staging_root = root / "staging"
     staging_root.mkdir(parents=True, exist_ok=True)
@@ -139,10 +155,10 @@ def stage_local_epl_source(
     normalized = normalize_season(season)
     source_path = Path(source_csv).expanduser().resolve()
     root = Path(data_dir).expanduser().resolve()
+    upstream_retrieved_at = _normalise_upstream_retrieved_at(upstream_retrieved_at)
     for name, value in (
         ("source_url", source_url),
         ("source_label", source_label),
-        ("upstream_retrieved_at", upstream_retrieved_at),
     ):
         if value is not None and not str(value).strip():
             raise ValueError(f"{name} cannot be empty when provided")
