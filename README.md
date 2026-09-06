@@ -1,4 +1,4 @@
-# MatchQuant M1–M9 — Research Engine
+# MatchQuant M1–M10 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -346,6 +346,46 @@ python -m matchquant forecast-session `
 
 `--output-root` 不得位于 `D:\Codex\matchquant_data` 或显式 fixture data root 内/与其重叠，不得等于 history、history manifest 或 fixture source 所在目录，也不得落入已有的 `m9_forecast_session_*` 子目录。history、manifest、fixture source、M5 raw/quality、active/current pointer 均保持不变；M9 不导入赛后结果。赛后若要更新历史，用户必须明确执行 M7/M2.1 并审查结果，再明确执行 M6 settle；M9 不自动触发这条流程。
 
+## M10：本地赛后会话闭环
+
+M10 把一个显式的 M9 赛前会话、用户提供的本地 E0 最终赛果文件和既有 M2.1/M6 串成一个完全离线、可审计的赛后闭环。M10 不搜索“最新”会话、history、model 或 staging，也不联网、不下载、不重跑 M4；它只接受 M9 `session_manifest.json`、显式赛季和以下两种输入模式之一。
+
+第一条命令只封存和预检：M7 把 E0 bytes 复制到新的 local staging snapshot，M2.1 随后对同一 snapshot 做 dry-run。它不会创建 history version、不会更新 `epl_current.json`，也不会执行 M6：
+
+```powershell
+python -m matchquant postmatch-session `
+  --session-manifest D:\Codex\matchquant_runs\m9_forecast_session_<...>\session_manifest.json `
+  --results-source D:\Codex\my_results\E0_results.csv `
+  --season 2025-26 `
+  --in-progress-season 2025-26 `
+  --data-root D:\Codex\matchquant_data `
+  --output-root D:\Codex\matchquant_runs
+```
+
+审查 M10 manifest、中文报告以及 M2.1 quality/diff/processed manifest 后，第二条命令必须使用上一步返回的同一个、明确指定的 staging 目录。只有这条单独的 `--apply` 调用才会先核对 active pointer 的 canonical 和 processed manifest 两个 SHA-256 是否仍与 M9 baseline 一致，再让 M2.1 创建 addition-only version 并原子更新 pointer；apply 成功后才以新 canonical 执行 M6：
+
+```powershell
+python -m matchquant postmatch-session `
+  --session-manifest D:\Codex\matchquant_runs\m9_forecast_session_<...>\session_manifest.json `
+  --staging-dir D:\Codex\matchquant_data\staging\epl_local_<...> `
+  --season 2025-26 `
+  --in-progress-season 2025-26 `
+  --apply `
+  --data-root D:\Codex\matchquant_data `
+  --output-root D:\Codex\matchquant_runs
+```
+
+`--results-source` 与 `--staging-dir` 互斥且必须恰好一个；`--apply` 与 `--results-source` 互斥，不能把 raw E0 文件在同一调用中直接 apply。`--dry-run` 只是默认预检模式的显式写法。`--in-progress-season` 原样交给 M2.1，绝不从日期推断；source URL、label 和 upstream retrieval time 仅是 M7 provenance，不会触发网络。
+
+每次调用在 `--output-root` 下创建唯一的 `m10_postmatch_session_<UTC>_<ID>`，其中只保存 `postmatch_manifest.json` 和中文 `postmatch_report.md`；M7、M2.1、M6 子产物留在各自目录并由 manifest 链接。M10 状态含义为：
+
+- `needs_review`：dry-run 成功等待明确 apply，或携带 M9/M6 的 `needs_review`；不代表可以跳过人工审查。
+- `complete`：M2.1 已 apply，M6 对所有预测行完成无歧义、无时间冲突的结算，且 M9 没有 review 状态。
+- `partial`：M2.1 已 apply，M6 只留下 unresolved、没有 ambiguous/time conflict，且 M9 没有 review 状态。
+- `blocked`：M9/hash、M7、M2.1、pointer coherence 或 M6 存在硬失败；后续不安全阶段不会运行。
+
+M2.1 apply 是前向不可回滚的历史变更。如果 pointer 已更新而 M6 随后失败，M10 保留新版本、pointer、失败证据和会话报告，绝不自动回滚；用户应单独解决结算。M10 输出的是本次本地数据上的审计与评估完成情况，不证明历史或赛果当前、不证明概率已校准、不证明盈利或投注价值，也不是实时预测或投注建议。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -394,4 +434,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5/M6/M8/M9 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、本地预测会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5/M6/M8/M9/M10 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
