@@ -4,7 +4,7 @@
 
 **Goal:** Add one explicit, offline M9 command that coordinates M5 fixture preparation, M4 forecasting, and M8 release verification into a traceable local pre-match session.
 
-**Architecture:** `forecast_session.py` owns sequencing, status propagation, output-root safety, and the M9 session manifest. `forecast_session_report.py` only renders the Chinese report. Existing M5, M4, and M8 functions remain the authoritative validators and artifact creators; the CLI only translates explicit arguments and presents compact output.
+**Architecture:** `forecast_session.py` owns sequencing, status propagation, and output-root safety. `forecast_session_support.py` owns immutable evidence records, unique/declared failure-artifact discovery, and manifest persistence; `forecast_session_report.py` only renders the Chinese report. Existing M5, M4, and M8 functions remain the authoritative validators and artifact creators; the CLI only translates explicit arguments and presents compact output.
 
 **Tech Stack:** Python 3, pandas, numpy, existing MatchQuant JSON/CSV helpers, unittest.
 
@@ -108,11 +108,12 @@ Expected: failure because `matchquant.forecast_session` is not implemented.
 
 **Files:**
 - Create: `matchquant/forecast_session.py`
+- Create: `matchquant/forecast_session_support.py`
 - Modify: `matchquant/__init__.py`
 - Test: `tests/test_forecast_session.py`
 
 **Interfaces:**
-- Consumes: existing M5 `prepare_epl_fixtures`, M4 `run_forecast`, M8 `verify_release`, `file_sha256`, and `write_json`; the exact child calls appear in Step 3 below.
+- Consumes: existing M5 `prepare_epl_fixtures`, M4 `run_forecast`, M8 `verify_release`, `file_sha256`, and `write_json`; evidence/persistence helpers live in `forecast_session_support.py`.
 - Produces: `FORECAST_SESSION_SCHEMA_VERSION`, `FORECAST_SESSION_STATUSES`, `run_forecast_session`, and `new_forecast_session_dir`.
 
 - [ ] **Step 1: Add output-root and choice validation.**
@@ -164,7 +165,7 @@ stages = {
 }
 ```
 
-On a stage exception, write `status="blocked"`, the concrete exception, previous artifact paths, and `not_run` for later stages. Never remove successfully written prior artifacts.
+On an expected runtime/input stage exception, write `status="blocked"`, the concrete exception, previous artifact paths, and `not_run` for later stages. Unexpected exceptions must bubble instead of being masked. Failure evidence binds an M5 declared manifest path or exactly one new child directory; multiple candidates are recorded as ambiguous without binding an arbitrary directory.
 
 - [ ] **Step 5: Export only the public M9 API.**
 
@@ -292,7 +293,7 @@ Expected: no whitespace errors.
 - [ ] **Step 4: Commit the implementation.**
 
 ```bash
-git add README.md matchquant/__init__.py matchquant/cli.py matchquant/forecast_session.py matchquant/forecast_session_report.py tests/test_forecast_session.py
+git add README.md matchquant/__init__.py matchquant/cli.py matchquant/forecast_session.py matchquant/forecast_session_support.py matchquant/forecast_session_report.py tests/test_forecast_session.py
 git commit -m "feat: add explicit M9 forecast session workflow"
 ```
 

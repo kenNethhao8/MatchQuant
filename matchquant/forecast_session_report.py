@@ -69,6 +69,14 @@ def write_forecast_session_report(manifest: Mapping[str, Any], path: Path) -> Pa
             for artifact_name, artifact in (stage.get("artifacts") or {}).items():
                 if isinstance(artifact, Mapping) and artifact.get("path"):
                     lines.append(_artifact_line(f"{label} {artifact_name}", artifact))
+            discovery = stage.get("artifact_discovery")
+            if isinstance(discovery, Mapping):
+                candidates = discovery.get("candidates") or []
+                candidate_text = ", ".join(_path_text(candidate) for candidate in candidates)
+                lines.append(
+                    f"  - 工件发现：`{_text(discovery.get('status'))}`；"
+                    f"候选：`{_text(candidate_text or '无')}`"
+                )
             reasons = stage.get("reasons") or []
             for reason in reasons:
                 lines.append(f"  - {_text(reason)}")

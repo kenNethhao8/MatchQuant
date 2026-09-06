@@ -5,8 +5,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from matchquant.forecast_session import run_forecast_session
+from matchquant.forecast_session_support import discover_new_child
 from matchquant.io import file_sha256, load_matches, write_json
 from matchquant.schema import DataValidationError, REQUIRED_COLUMNS
 
@@ -53,6 +55,9 @@ class ForecastSessionTests(unittest.TestCase):
 
     def _run_explicit(self, root: Path, *, completed_date: str = "06/01/2024") -> tuple[dict, dict[str, Path]]:
         paths = self._build_inputs(root, completed_date=completed_date)
+        return self._run_explicit_paths(root, paths)
+
+    def _run_explicit_paths(self, root: Path, paths: dict[str, Path]):
         result = run_forecast_session(
             paths["history"],
             paths["history_manifest"],
@@ -99,8 +104,9 @@ class ForecastSessionTests(unittest.TestCase):
             pointer.parent.mkdir(parents=True)
             pointer.write_text('{"version":"untouched"}\n', encoding="utf-8")
             pointer_before = file_sha256(pointer)
-            before = {name: file_sha256(path) for name, path in self._build_inputs(root).items()}
-            result, paths = self._run_explicit(root)
+            paths = self._build_inputs(root)
+            before = {name: file_sha256(path) for name, path in paths.items()}
+            result, _ = self._run_explicit_paths(root, paths)
 
             self.assertEqual(result["status"], "ready")
             session_dir = Path(result["session_dir"])
@@ -208,6 +214,21 @@ class ForecastSessionTests(unittest.TestCase):
             self.assertEqual(result["stages"]["release_verification"]["status"], "not_run")
             self.assertIn("missing_history.csv", Path(result["session_report_path"]).read_text(encoding="utf-8"))
 
+    def test_unexpected_stage_errors_are_not_masked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self._build_inputs(root)
+            with patch(
+                "matchquant.forecast_session.run_forecast",
+                side_effect=RuntimeError("unexpected programming failure"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "unexpected programming failure"):
+                    run_forecast_session(
+                        paths["history"], paths["history_manifest"], paths["source"], "2024-25", "2024-01-07",
+                        model_name="frequency", model_config_path=paths["model"],
+                        fixture_data_root=root / "fixture-data", output_root=root / "runs",
+                    )
+
     def test_m3_selection_mode_is_explicitly_recorded(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -246,6 +267,21 @@ class ForecastSessionTests(unittest.TestCase):
                     fixture_data_root=fixture_root, output_root=session_child,
                 )
             self.assertEqual(list(session_parent.iterdir()), [session_child])
+
+    def test_ambiguous_partial_artifacts_are_not_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "runs"
+            root.mkdir()
+            before = set(root.iterdir())
+            (root / "m4_forecast_20240519_a").mkdir()
+            (root / "m4_forecast_20240519_b").mkdir()
+
+            bound, discovery = discover_new_child(root, "m4_forecast_", before)
+
+            self.assertIsNone(bound)
+            self.assertEqual(discovery["status"], "ambiguous")
+            self.assertIsNone(discovery["bound_path"])
+            self.assertEqual(len(discovery["candidates"]), 2)
 
     def test_cli_smoke_is_concise_and_returns_m8_status(self):
         with tempfile.TemporaryDirectory() as temporary:
