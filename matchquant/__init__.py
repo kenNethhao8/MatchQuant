@@ -1,4 +1,4 @@
-"""MatchQuant M1-M9: deterministic football research and local forecasts."""
+"""MatchQuant M1-M10: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -53,6 +53,11 @@ from .forecast_session import (
     new_forecast_session_dir,
     run_forecast_session,
 )
+from .postmatch_session import (
+    POSTMATCH_SESSION_SCHEMA_VERSION,
+    POSTMATCH_SESSION_STATUSES,
+    run_postmatch_session,
+)
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
@@ -81,6 +86,8 @@ __all__ = [
     "FORECAST_SCHEMA_VERSION",
     "FORECAST_SESSION_SCHEMA_VERSION",
     "FORECAST_SESSION_STATUSES",
+    "POSTMATCH_SESSION_SCHEMA_VERSION",
+    "POSTMATCH_SESSION_STATUSES",
     "DEFAULT_EPL_SEASONS",
     "FIXTURE_ADAPTER_VERSION",
     "FIXTURE_DIFF_VERSION",
@@ -126,6 +133,7 @@ __all__ = [
     "run_forecast",
     "new_forecast_session_dir",
     "run_forecast_session",
+    "run_postmatch_session",
     "run_walk_forward",
     "run_nested_selection",
     "settle_forecast_run",

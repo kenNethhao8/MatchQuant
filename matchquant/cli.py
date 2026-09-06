@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M9."""
+"""Command-line entry point for MatchQuant M1-M10."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
 from .forecast import run_forecast
 from .forecast_session import run_forecast_session
+from .postmatch_session import run_postmatch_session
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
@@ -184,6 +185,24 @@ def _parser() -> argparse.ArgumentParser:
         "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
         help="root for unique M4, M8, and M9 artifacts",
     )
+    postmatch = subparsers.add_parser(
+        "postmatch-session", help="offline explicit M7 -> M2.1 -> M6 post-match session",
+    )
+    postmatch.add_argument("--session-manifest", type=Path, required=True, help="explicit M9 session_manifest.json")
+    postmatch_sources = postmatch.add_mutually_exclusive_group(required=True)
+    postmatch_sources.add_argument("--results-source", type=Path, help="local E0 results CSV; stages only")
+    postmatch_sources.add_argument("--staging-dir", type=Path, help="existing M7/M2.1 staging snapshot")
+    postmatch.add_argument("--season", required=True, help="explicit season such as 2025-26")
+    postmatch_mode = postmatch.add_mutually_exclusive_group()
+    postmatch_mode.add_argument("--apply", action="store_true", help="apply the reviewed staging snapshot and settle M6")
+    postmatch_mode.add_argument("--dry-run", action="store_true", help="stage and compare only (default)")
+    postmatch.add_argument("--in-progress-season", help="explicit incomplete-season exception passed to M2.1")
+    postmatch.add_argument("--source-url", help="provenance text only for a fresh local stage; no network access")
+    postmatch.add_argument("--source-label", help="provenance text only for a fresh local stage")
+    postmatch.add_argument("--upstream-retrieved-at", "--source-retrieved-at", dest="upstream_retrieved_at", help="optional timezone-aware upstream retrieval time")
+    postmatch.add_argument("--data-root", type=Path, default=Path(r"D:\Codex\matchquant_data"), help="M7/M2.1 data root")
+    postmatch.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"), help="root for unique M10/M6 artifacts")
+    postmatch.add_argument("--current-pointer", type=Path, help="optional active M2.1 pointer for apply coherence")
     return parser
 
 
@@ -576,6 +595,30 @@ def _forecast_session(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "ready" else 2
 
 
+def _postmatch_session(args: argparse.Namespace) -> int:
+    result = run_postmatch_session(
+        args.session_manifest,
+        args.season,
+        results_source_csv=args.results_source,
+        staging_dir=args.staging_dir,
+        apply=args.apply,
+        in_progress_season=args.in_progress_season,
+        source_url=args.source_url,
+        source_label=args.source_label,
+        upstream_retrieved_at=args.upstream_retrieved_at,
+        data_root=args.data_root,
+        output_root=args.output_root,
+        current_pointer_path=args.current_pointer,
+    )
+    print(f"MatchQuant M10 post-match session {result['status']}")
+    print(f"session_dir={result['session_dir']}")
+    print(f"staging={result['staging_dir'] or 'not_run'}")
+    print(f"sync={result['stages']['sync']['status']}")
+    print(f"settlement={result['stages']['settlement']['status']}")
+    print(f"report={result['postmatch_report_path']}")
+    return 0 if result["status"] in {"complete", "partial"} else 2
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -602,6 +645,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_release_verify(args))
         if args.command == "forecast-session":
             raise SystemExit(_forecast_session(args))
+        if args.command == "postmatch-session":
+            raise SystemExit(_postmatch_session(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
