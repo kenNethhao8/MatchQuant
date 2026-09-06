@@ -19,6 +19,7 @@
 - Store M5 snapshots only in the explicit fixture data root and M4/M8/M9 run artifacts only in the explicit output root.
 - Never overwrite or delete raw inputs, history, manifests, pointers, or child artifacts after a failure.
 - Do not merge or push; commit only the feature branch after all tests pass.
+- Guard correction: `output-root` is rejected when it is inside `D:\Codex\matchquant_data` or the explicit `fixture-data-root`, when the two roots overlap, when it equals a history/manifest/fixture-source parent directory, or when it is inside an existing `m9_forecast_session_*` directory. A normal sibling layout such as `<temp>\inputs` plus `<temp>\runs` remains valid; rejecting every descendant of the source file's parent would incorrectly reject that isolated layout.
 
 ---
 
@@ -121,9 +122,12 @@ if selection_run_config_path is not None and model_name is not None:
     raise ValueError("selection run config and --model are mutually exclusive")
 if selection_run_config_path is None and (model_name is None or model_config_path is None):
     raise ValueError("provide either selection evidence or explicit --model with --model-config")
-unsafe_roots = (data_root_path, history_file.parent, history_manifest.parent, fixture_source.parent)
-if any(_within(output_root_path, root) for root in unsafe_roots):
-    raise DataValidationError("M9 output-root must not be inside matchquant_data or an input directory")
+if _within(output_root_path, data_root_path) or _within(output_root_path, fixture_data_root_path):
+    raise DataValidationError("M9 output-root must not be inside matchquant_data or fixture-data-root")
+if _within(fixture_data_root_path, output_root_path):
+    raise DataValidationError("M9 output-root and fixture-data-root must not overlap")
+if output_root_path in {history_file.parent, history_manifest.parent, fixture_source.parent}:
+    raise DataValidationError("M9 output-root must not equal an input directory")
 ```
 
 - [ ] **Step 2: Create a unique session directory before child stages.**

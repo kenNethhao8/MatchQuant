@@ -1,4 +1,4 @@
-# MatchQuant M1–M8 — Research Engine
+# MatchQuant M1–M9 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -307,6 +307,45 @@ python -m matchquant release-verify `
 
 建议的手动顺序是：`M7` 或 `M2.1` 的可选历史更新（如确有需要）→ `M5 epl-fixtures-prepare` → `M4 forecast` → `M8 release-verify` → 后续 `M6 settle`。M8 不证明历史数据或赛程已“最新”，M5 的复制时间、文件日期范围和 source URL 也不证明实时性；它不代表实时预测、概率已校准、盈利能力或投注建议，不建立 source 文件的再分发授权。
 
+## M9：本地预测会话闭环
+
+M9 是一个完全离线、显式输入的赛前封装命令，严格按 `M5 epl-fixtures-prepare → M4 forecast → M8 release-verify` 执行。它不新增模型、不自动选择 history/manifest/fixture/模型、不联网、不调用 `epl-download`、`epl-sync`、`epl-local-stage` 或 `settle`，也不会更新 `epl_current.json`、active/current pointer 或历史结果。
+
+```powershell
+python -m matchquant forecast-session `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --history-manifest D:\Codex\matchquant_data\processed\epl_processed_manifest.json `
+  --fixture-source D:\Codex\my_input\E0.csv `
+  --season 2025-26 `
+  --as-of 2026-09-06 `
+  --model poisson `
+  --model-config D:\Codex\my_input\poisson.json `
+  --fixture-data-root D:\Codex\matchquant_data `
+  --output-root D:\Codex\matchquant_runs
+```
+
+也可以用 M3 的选择证据替代显式模型配置，两种方式互斥：
+
+```powershell
+python -m matchquant forecast-session `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --history-manifest D:\Codex\matchquant_data\processed\epl_processed_manifest.json `
+  --fixture-source D:\Codex\my_input\E0.csv `
+  --season 2025-26 `
+  --as-of 2026-09-06 `
+  --selection-run-config D:\Codex\matchquant_runs\m3_select_<...>\run_config.json
+```
+
+每次调用会在 `--output-root` 下创建唯一的 `m9_forecast_session_<UTC>_<ID>` 目录，并在其中只写 `session_manifest.json` 和中文 `session_report.md`。M5 snapshot 留在显式 `--fixture-data-root` 下；M4 forecast 和 M8 release audit 留在显式 `--output-root` 下。M9 manifest/report 只链接子产物并保存路径、SHA-256、状态、失败原因和不变更声明，不复制 predictions、raw source 或第三方数据。即使 M5/M4 在中途失败，也会先创建 M9 目录并保留会话证据；后续未运行阶段标为 `not_run`。
+
+`ready`、`needs_review`、`blocked` 原样来自 M8（M5/M4 无法完成时 M9 为 `blocked`）：
+
+- `ready`：M8 硬完整性与时间核验通过；不代表实时性、校准、盈利、投注价值或人工发布完成。
+- `needs_review`：M8 保留可人工复核的时间/版本/legacy 证据，不应直接发布。
+- `blocked`：M8 或前置阶段存在无法安全继续的硬问题。
+
+`--output-root` 不得位于 `D:\Codex\matchquant_data` 或显式 fixture data root 内/与其重叠，不得等于 history、history manifest 或 fixture source 所在目录，也不得落入已有的 `m9_forecast_session_*` 子目录。history、manifest、fixture source、M5 raw/quality、active/current pointer 均保持不变；M9 不导入赛后结果。赛后若要更新历史，用户必须明确执行 M7/M2.1 并审查结果，再明确执行 M6 settle；M9 不自动触发这条流程。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -355,4 +394,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5/M6 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照与本地结算不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5/M6/M8/M9 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、本地预测会话与本地结算不等于未来表现、盈利、投注价值或投注建议。

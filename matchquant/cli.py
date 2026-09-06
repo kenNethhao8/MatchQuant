@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M8."""
+"""Command-line entry point for MatchQuant M1-M9."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from .epl_fixtures import prepare_epl_fixtures
 from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
 from .forecast import run_forecast
+from .forecast_session import run_forecast_session
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
@@ -157,6 +158,32 @@ def _parser() -> argparse.ArgumentParser:
     release.add_argument("--history-manifest", type=Path, required=True, help="explicit M2/M2.1 processed manifest JSON")
     release.add_argument("--fixture-manifest", "--fixture-snapshot-manifest", dest="fixture_manifest", type=Path, required=True, help="explicit M5 fixture_snapshot_manifest.json")
     release.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"), help="root for one new timestamped M8 audit directory")
+    session = subparsers.add_parser(
+        "forecast-session", help="offline explicit M5 -> M4 -> M8 pre-match session",
+    )
+    session.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
+    session.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
+    session.add_argument("--fixture-source", type=Path, required=True, help="local E0-compatible fixture source CSV")
+    session.add_argument("--season", required=True, help="explicit season such as 2025-26")
+    session.add_argument("--as-of", required=True, help="forecast snapshot date/time")
+    session_selection = session.add_mutually_exclusive_group(required=True)
+    session_selection.add_argument(
+        "--selection-run-config", "--selection-config", "--m3-run-config",
+        dest="selection_run_config", type=Path, help="explicit M3 selection run_config.json",
+    )
+    session_selection.add_argument("--model", choices=MODEL_NAMES, help="explicit model name; requires --model-config")
+    session.add_argument("--model-config", "--config", type=Path, help="JSON config for the explicit --model")
+    session.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
+    session.add_argument("--source-url", help="provenance text only; no network access")
+    session.add_argument("--source-label", help="provenance text only; no network access")
+    session.add_argument(
+        "--fixture-data-root", type=Path, default=Path(r"D:\Codex\matchquant_data"),
+        help="root for the new immutable M5 fixture snapshot",
+    )
+    session.add_argument(
+        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
+        help="root for unique M4, M8, and M9 artifacts",
+    )
     return parser
 
 
@@ -527,6 +554,28 @@ def _release_verify(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "ready" else 2
 
 
+def _forecast_session(args: argparse.Namespace) -> int:
+    result = run_forecast_session(
+        args.history,
+        args.history_manifest,
+        args.fixture_source,
+        args.season,
+        args.as_of,
+        selection_run_config_path=args.selection_run_config,
+        model_name=args.model,
+        model_config_path=args.model_config,
+        season_mode=args.season_mode,
+        source_url=args.source_url,
+        source_label=args.source_label,
+        fixture_data_root=args.fixture_data_root,
+        output_root=args.output_root,
+    )
+    print(f"MatchQuant M9 forecast session {result['status']}")
+    print(f"session_dir={result['session_dir']}")
+    print(f"release_report={result['release_report_path'] or 'not_run'}")
+    return 0 if result["status"] == "ready" else 2
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -551,6 +600,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_settle(args))
         if args.command == "release-verify":
             raise SystemExit(_release_verify(args))
+        if args.command == "forecast-session":
+            raise SystemExit(_forecast_session(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
