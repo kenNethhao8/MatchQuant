@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M11."""
+"""Command-line entry point for MatchQuant M1-M12."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from .epl_fixtures import prepare_epl_fixtures
 from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
 from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
+from .engine_snapshot_status import check_engine_snapshot_status
 from .forecast import load_model_config, run_forecast
 from .forecast_session import run_forecast_session
 from .postmatch_session import run_postmatch_session
@@ -112,6 +113,16 @@ def _parser() -> argparse.ArgumentParser:
     snapshot_predict.add_argument(
         "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
         help="root for a new timestamped M11 prediction directory",
+    )
+    snapshot_status = subparsers.add_parser(
+        "engine-snapshot-status",
+        help="audit one explicit M11 snapshot against one explicit M2.1 current pointer",
+    )
+    snapshot_status.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
+    snapshot_status.add_argument("--current-pointer", type=Path, required=True, help="explicit M2.1 epl_current.json")
+    snapshot_status.add_argument(
+        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
+        help="root for a new timestamped M12 status audit directory",
     )
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
@@ -534,6 +545,20 @@ def _engine_snapshot_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _engine_snapshot_status(args: argparse.Namespace) -> int:
+    result = check_engine_snapshot_status(
+        args.snapshot_manifest,
+        args.current_pointer,
+        output_root=args.output_root,
+    )
+    print(f"MatchQuant M12 engine snapshot status {result['status']}")
+    print(f"snapshot={args.snapshot_manifest}")
+    print(f"current_pointer={args.current_pointer}")
+    print(f"status_manifest={result['status_manifest_path']}")
+    print(f"status_report={result['status_report_path']}")
+    return 0 if result["status"] in {"fresh", "stale"} else 2
+
+
 def _epl_download(args: argparse.Namespace) -> int:
     manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
     print("MatchQuant M2 EPL download complete")
@@ -728,6 +753,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_engine_snapshot_build(args))
         if args.command == "engine-snapshot-predict":
             raise SystemExit(_engine_snapshot_predict(args))
+        if args.command == "engine-snapshot-status":
+            raise SystemExit(_engine_snapshot_status(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

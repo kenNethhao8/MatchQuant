@@ -1,4 +1,4 @@
-# MatchQuant M1–M11 — Research Engine
+# MatchQuant M1–M12 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -423,6 +423,19 @@ python -m matchquant engine-snapshot-predict `
 
 预测会严格校验快照 manifest、状态 hash、模型配置/状态一致性以及 fixture 不早于 as-of；它不接受 history 参数，不读取或更新历史，不更新模型状态，也不联网。预测运行保存 `predictions.csv`、`run_config.json` 和 `snapshot_report.md`，并记录快照 manifest/hash、fixture hash、cutoff 和输出 hash。快照预测应与同一 history/config/as-of 的 M4 `forecast_fixtures` 结果一致；未来新增或修改的 cutoff 后比赛不会改变已构建状态。M11 是轻量化基础层，不包含 Alpha 因子、近期信息、新闻、赔率、数据库、网页、调度或机器学习，也不证明数据当前、概率已校准、盈利能力或投注价值。
 
+## M12：引擎快照新鲜度与历史版本关联
+
+M12 只做一个完全离线、只读的审计：把用户明确给出的 M11 `snapshot_manifest.json` 与明确给出的 M2.1 `epl_current.json` 的 canonical/processed-manifest 路径、SHA-256 和 dataset version 进行比较。它不重写 M2.1/M7/M10，不联网，不更新 current pointer，不修改历史或已有 M11 快照，也不自动寻找 latest、apply 或重建快照。
+
+```powershell
+python -m matchquant engine-snapshot-status `
+  --snapshot-manifest D:\Codex\matchquant_data\engine_snapshots\m11_engine_snapshot_<...>\snapshot_manifest.json `
+  --current-pointer D:\Codex\matchquant_data\processed\epl_current.json `
+  --output-root D:\Codex\matchquant_runs
+```
+
+每次调用都会在显式 output root 下创建唯一的 `m12_engine_snapshot_status_<UTC>_<ID>`，保存 `snapshot_status.json` 和简洁的 `snapshot_status.md`。`fresh` 只在两类证据完整且路径、hash、dataset version 精确匹配时返回；有效但关联到不同历史版本的快照返回 `stale`；缺失、篡改或结构不完整的 snapshot/pointer 返回 `unverifiable` 并保留失败证据。`stale` 不会使旧快照失效：旧快照仍可由 `engine-snapshot-predict` 独立复现。若要重建，用户必须主动再次执行显式的 M11 `engine-snapshot-build`。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -471,4 +484,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11/M12 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、快照新鲜度审计、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。

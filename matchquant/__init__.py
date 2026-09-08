@@ -1,4 +1,4 @@
-"""MatchQuant M1-M11: deterministic football research and local forecasts."""
+"""MatchQuant M1-M12: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -31,6 +31,10 @@ from .epl_local_stage import (
     stage_local_epl_source,
 )
 from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
+from .engine_snapshot_status import (
+    ENGINE_SNAPSHOT_STATUS_SCHEMA_VERSION,
+    check_engine_snapshot_status,
+)
 from .engine_snapshot_support import (
     ENGINE_SNAPSHOT_SCHEMA_VERSION,
     ENGINE_STATE_SCHEMA_VERSION,
@@ -104,6 +108,7 @@ __all__ = [
     "FIXTURE_SOURCE_REQUIRED_COLUMNS",
     "ENGINE_SNAPSHOT_SCHEMA_VERSION",
     "ENGINE_STATE_SCHEMA_VERSION",
+    "ENGINE_SNAPSHOT_STATUS_SCHEMA_VERSION",
     "LOCAL_STAGE_ADAPTER_VERSION",
     "LOCAL_STAGE_MANIFEST_VERSION",
     "EloModel",
@@ -119,6 +124,7 @@ __all__ = [
     "RELEASE_VERIFY_SCHEMA_VERSION",
     "create_model",
     "build_engine_snapshot",
+    "check_engine_snapshot_status",
     "audit_source_frame",
     "audit_sync_source_frame",
     "calibration_diagnostics",
