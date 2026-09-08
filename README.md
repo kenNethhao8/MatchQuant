@@ -1,4 +1,4 @@
-# MatchQuant M1–M10 — Research Engine
+# MatchQuant M1–M11 — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -386,6 +386,43 @@ python -m matchquant postmatch-session `
 
 M2.1 apply 是前向不可回滚的历史变更。如果 pointer 已更新而 M6 随后失败，M10 保留新版本、pointer、失败证据和会话报告，绝不自动回滚；用户应单独解决结算。M10 输出的是本次本地数据上的审计与评估完成情况，不证明历史或赛果当前、不证明概率已校准、不证明盈利或投注价值，也不是实时预测或投注建议。
 
+## M11：引擎状态快照
+
+M11 把显式 history 在一个明确 `as-of` 边界前的 M4 在线更新状态保存为不可变 JSON 快照。构建阶段必须同时给出 canonical history 和匹配的 processed manifest；程序核对路径、SHA-256、行数、列和 manifest `data_cutoff`，按 M4 的时间批次先预测后更新语义生成状态。快照目录只包含 `snapshot_manifest.json` 和 `model_states.json`，不会复制 history、raw 数据或可执行对象。
+
+显式模型配置的构建示例（`--model` 与 `--model-config` 按出现顺序一一对应）：
+
+```powershell
+python -m matchquant engine-snapshot-build `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --history-manifest D:\Codex\matchquant_data\processed\epl_processed_manifest.json `
+  --as-of 2025-08-01 `
+  --model poisson `
+  --model-config examples\forecast_poisson.json `
+  --snapshot-root D:\Codex\matchquant_data\engine_snapshots
+```
+
+也可以传入一个已有的 M3 `run_config.json` 作为唯一选择证据：
+
+```powershell
+python -m matchquant engine-snapshot-build `
+  --history D:\Codex\matchquant_data\processed\epl_canonical.csv `
+  --history-manifest D:\Codex\matchquant_data\processed\epl_processed_manifest.json `
+  --as-of 2025-08-01 `
+  --selection-run-config D:\Codex\matchquant_runs\m3_select_<...>\run_config.json
+```
+
+构建输出的 manifest 记录 as-of 语义、历史和历史 manifest 的路径/hash、总行数、纳入/排除行数、实际 cutoff、模型配置/hash、状态文件/hash、不可变/不联网声明。预测阶段只需显式指定该 manifest 和 score-free 的 M4 fixture CSV：
+
+```powershell
+python -m matchquant engine-snapshot-predict `
+  --snapshot-manifest D:\Codex\matchquant_data\engine_snapshots\m11_engine_snapshot_<...>\snapshot_manifest.json `
+  --fixtures D:\Codex\my_fixtures.csv `
+  --output-root D:\Codex\matchquant_runs
+```
+
+预测会严格校验快照 manifest、状态 hash、模型配置/状态一致性以及 fixture 不早于 as-of；它不接受 history 参数，不读取或更新历史，不更新模型状态，也不联网。预测运行保存 `predictions.csv`、`run_config.json` 和 `snapshot_report.md`，并记录快照 manifest/hash、fixture hash、cutoff 和输出 hash。快照预测应与同一 history/config/as-of 的 M4 `forecast_fixtures` 结果一致；未来新增或修改的 cutoff 后比赛不会改变已构建状态。M11 是轻量化基础层，不包含 Alpha 因子、近期信息、新闻、赔率、数据库、网页、调度或机器学习，也不证明数据当前、概率已校准、盈利能力或投注价值。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。
@@ -434,4 +471,4 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5/M6/M8/M9/M10 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
+M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。

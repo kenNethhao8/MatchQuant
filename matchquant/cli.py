@@ -1,4 +1,4 @@
-"""Command-line entry point for MatchQuant M1-M10."""
+"""Command-line entry point for MatchQuant M1-M11."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .epl_fixtures import prepare_epl_fixtures
 from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
-from .forecast import run_forecast
+from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
+from .forecast import load_model_config, run_forecast
 from .forecast_session import run_forecast_session
 from .postmatch_session import run_postmatch_session
 from .io import file_sha256, load_matches, write_json, write_predictions
@@ -77,6 +78,40 @@ def _parser() -> argparse.ArgumentParser:
     forecast.add_argument(
         "--output-root", "--output-dir", dest="output_root", type=Path,
         default=Path(r"D:\Codex\matchquant_runs"), help="root for a new timestamped forecast directory",
+    )
+    snapshot_build = subparsers.add_parser(
+        "engine-snapshot-build",
+        help="build an offline M11 model-state snapshot from explicit history evidence",
+    )
+    snapshot_build.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
+    snapshot_build.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
+    snapshot_build.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
+    snapshot_selection = snapshot_build.add_mutually_exclusive_group(required=True)
+    snapshot_selection.add_argument(
+        "--selection-run-config", "--selection-config", dest="selection_run_config", type=Path,
+        help="explicit M3 selection run_config.json",
+    )
+    snapshot_selection.add_argument(
+        "--model", action="append", choices=MODEL_NAMES, help="repeat for each explicit model",
+    )
+    snapshot_build.add_argument(
+        "--model-config", action="append", type=Path,
+        help="repeat in the same order as --model; each is a JSON model config",
+    )
+    snapshot_build.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
+    snapshot_build.add_argument(
+        "--snapshot-root", type=Path, default=Path(r"D:\Codex\matchquant_data\engine_snapshots"),
+        help="root for a new immutable M11 snapshot directory",
+    )
+    snapshot_predict = subparsers.add_parser(
+        "engine-snapshot-predict",
+        help="predict from an explicit M11 snapshot without loading history",
+    )
+    snapshot_predict.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
+    snapshot_predict.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
+    snapshot_predict.add_argument(
+        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
+        help="root for a new timestamped M11 prediction directory",
     )
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
@@ -439,6 +474,66 @@ def _forecast(args: argparse.Namespace) -> int:
     return 0
 
 
+def _engine_snapshot_build(args: argparse.Namespace) -> int:
+    if args.selection_run_config is not None:
+        if args.model_config:
+            raise ValueError("--selection-run-config and --model-config are mutually exclusive")
+        result = build_engine_snapshot(
+            args.history,
+            args.history_manifest,
+            args.as_of,
+            selection_run_config_path=args.selection_run_config,
+            output_root=args.snapshot_root,
+            season_mode=args.season_mode,
+        )
+    else:
+        names = args.model or []
+        config_paths = args.model_config or []
+        if not names:
+            raise ValueError("provide --model at least once or --selection-run-config")
+        if len(config_paths) != len(names):
+            raise ValueError("each --model must have one matching --model-config")
+        configs: dict[str, dict[str, Any]] = {}
+        sources: dict[str, Path] = {}
+        for name, path in zip(names, config_paths):
+            if name in configs:
+                raise ValueError("--model values must be unique")
+            configs[name] = load_model_config(path, name)
+            sources[name] = path
+        result = build_engine_snapshot(
+            args.history,
+            args.history_manifest,
+            args.as_of,
+            model_names=names,
+            model_configs=configs,
+            model_config_paths=sources,
+            output_root=args.snapshot_root,
+            season_mode=args.season_mode,
+        )
+    manifest = result["manifest"]
+    print("MatchQuant M11 engine snapshot build complete")
+    print(f"models={','.join(result['model_names'])} rows_used={manifest['history']['rows_used_before_as_of']} as_of={manifest['as_of']['value']}")
+    print(f"snapshot_dir={result['snapshot_dir']}")
+    print(f"snapshot_manifest={result['snapshot_manifest_path']}")
+    print(f"model_states={result['model_states_path']}")
+    print(f"snapshot_manifest_sha256={result['manifest_sha256']}")
+    return 0
+
+
+def _engine_snapshot_predict(args: argparse.Namespace) -> int:
+    result = predict_from_engine_snapshot(
+        args.snapshot_manifest,
+        args.fixtures,
+        output_root=args.output_root,
+    )
+    print("MatchQuant M11 engine snapshot predict complete")
+    print(f"models={','.join(result['config']['model_names'])} predictions={len(result['predictions'])}")
+    print(f"predictions={result['predictions_path']}")
+    print(f"snapshot_report={result['snapshot_report_path']}")
+    print(f"run_config={result['run_config_path']}")
+    return 0
+
+
 def _epl_download(args: argparse.Namespace) -> int:
     manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
     print("MatchQuant M2 EPL download complete")
@@ -629,6 +724,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_select(args))
         if args.command == "forecast":
             raise SystemExit(_forecast(args))
+        if args.command == "engine-snapshot-build":
+            raise SystemExit(_engine_snapshot_build(args))
+        if args.command == "engine-snapshot-predict":
+            raise SystemExit(_engine_snapshot_predict(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

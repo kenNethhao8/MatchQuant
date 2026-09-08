@@ -1,4 +1,4 @@
-"""MatchQuant M1-M10: deterministic football research and local forecasts."""
+"""MatchQuant M1-M11: deterministic football research and local forecasts."""
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
@@ -29,6 +29,14 @@ from .epl_local_stage import (
     LOCAL_STAGE_ADAPTER_VERSION,
     LOCAL_STAGE_MANIFEST_VERSION,
     stage_local_epl_source,
+)
+from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
+from .engine_snapshot_support import (
+    ENGINE_SNAPSHOT_SCHEMA_VERSION,
+    ENGINE_STATE_SCHEMA_VERSION,
+    export_model_state,
+    import_model_state,
+    load_engine_snapshot,
 )
 from .fixtures import (
     FIXTURE_COLUMNS,
@@ -94,6 +102,8 @@ __all__ = [
     "FIXTURE_MANIFEST_VERSION",
     "FIXTURE_QUALITY_VERSION",
     "FIXTURE_SOURCE_REQUIRED_COLUMNS",
+    "ENGINE_SNAPSHOT_SCHEMA_VERSION",
+    "ENGINE_STATE_SCHEMA_VERSION",
     "LOCAL_STAGE_ADAPTER_VERSION",
     "LOCAL_STAGE_MANIFEST_VERSION",
     "EloModel",
@@ -108,6 +118,7 @@ __all__ = [
     "RELEASE_STATUSES",
     "RELEASE_VERIFY_SCHEMA_VERSION",
     "create_model",
+    "build_engine_snapshot",
     "audit_source_frame",
     "audit_sync_source_frame",
     "calibration_diagnostics",
@@ -121,16 +132,20 @@ __all__ = [
     "file_sha256",
     "forecast_fixtures",
     "load_fixtures",
+    "load_engine_snapshot",
     "load_model_config",
     "load_selection_run_config",
     "load_matches",
     "load_candidates",
     "load_forecast_run",
     "multiclass_ece",
+    "export_model_state",
+    "import_model_state",
     "parse_validation_folds",
     "reliability_table",
     "run_models",
     "run_forecast",
+    "predict_from_engine_snapshot",
     "new_forecast_session_dir",
     "run_forecast_session",
     "run_postmatch_session",
