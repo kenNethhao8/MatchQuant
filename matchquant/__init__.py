@@ -73,6 +73,7 @@ from .postmatch_session import (
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
+from .prediction_evidence import load_prediction_evidence
 from .schema import DataValidationError, REQUIRED_COLUMNS, validate_matches
 from .selection import load_candidates, parse_validation_folds, run_nested_selection
 from .settlement import (
@@ -144,6 +145,7 @@ __all__ = [
     "load_matches",
     "load_candidates",
     "load_forecast_run",
+    "load_prediction_evidence",
     "multiclass_ece",
     "export_model_state",
     "import_model_state",

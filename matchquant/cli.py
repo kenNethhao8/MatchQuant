@@ -181,10 +181,12 @@ def _parser() -> argparse.ArgumentParser:
         default=Path(r"D:\Codex\matchquant_data"),
         help="root for immutable fixture snapshots",
     )
-    settle = subparsers.add_parser("settle", help="offline-settle one M4 forecast with local M1 results")
+    settle = subparsers.add_parser(
+        "settle", help="offline-settle one M4 or single-model M11 prediction run with local M1 results"
+    )
     settle.add_argument(
         "--forecast-run", "--forecast-run-dir", "--forecast-dir", dest="forecast_run",
-        type=Path, required=True, help="completed M4 forecast run directory",
+        type=Path, required=True, help="completed M4 forecast or single-model M11 snapshot prediction run directory",
     )
     settle.add_argument(
         "--results", "--results-csv", dest="results", type=Path, required=True,

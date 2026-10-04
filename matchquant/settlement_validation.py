@@ -50,7 +50,7 @@ def _valid_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
 
 
-def _read_prediction_csv(path: Path) -> pd.DataFrame:
+def _read_prediction_csv(path: Path, *, producer_label: str = "M4") -> pd.DataFrame:
     try:
         raw = pd.read_csv(path, dtype="string", keep_default_na=False)
     except (OSError, ValueError, pd.errors.ParserError) as exc:
@@ -58,7 +58,7 @@ def _read_prediction_csv(path: Path) -> pd.DataFrame:
     try:
         frame = validate_fixtures(raw)
     except (TypeError, ValueError) as exc:
-        raise DataValidationError(f"predictions CSV is not a valid M4 fixture table: {exc}") from exc
+        raise DataValidationError(f"predictions CSV is not a valid {producer_label} fixture table: {exc}") from exc
     missing = [column for column in PREDICTION_REQUIRED_COLUMNS if column not in frame.columns]
     if missing:
         raise DataValidationError(
@@ -123,10 +123,12 @@ def _read_prediction_csv(path: Path) -> pd.DataFrame:
     return frame
 
 
-def _as_of_from_config(config: Mapping[str, Any]) -> tuple[pd.Timestamp, bool, dict[str, object]]:
+def _as_of_from_config(
+    config: Mapping[str, Any], *, label: str = "M4 run config"
+) -> tuple[pd.Timestamp, bool, dict[str, object]]:
     raw = config.get("as_of")
     if not isinstance(raw, Mapping) or raw.get("value") in (None, ""):
-        raise DataValidationError("M4 run config must contain an as_of object with a value")
+        raise DataValidationError(f"{label} must contain an as_of object with a value")
     value = raw["value"]
     try:
         timestamp, inferred_date_only = _parse_boundary(value, "forecast as_of")
@@ -134,15 +136,15 @@ def _as_of_from_config(config: Mapping[str, Any]) -> tuple[pd.Timestamp, bool, d
         raise DataValidationError(str(exc)) from exc
     declared_date_only = raw.get("date_only")
     if not isinstance(declared_date_only, bool) or declared_date_only != inferred_date_only:
-        raise DataValidationError("M4 run config as_of.date_only is inconsistent with as_of.value")
+        raise DataValidationError(f"{label} as_of.date_only is inconsistent with as_of.value")
     recorded_timestamp = raw.get("timestamp")
     if recorded_timestamp is not None:
         try:
             parsed_recorded = pd.Timestamp(recorded_timestamp)
         except (TypeError, ValueError) as exc:
-            raise DataValidationError("M4 run config as_of.timestamp is invalid") from exc
+            raise DataValidationError(f"{label} as_of.timestamp is invalid") from exc
         if parsed_recorded != timestamp:
-            raise DataValidationError("M4 run config as_of.timestamp does not match as_of.value")
+            raise DataValidationError(f"{label} as_of.timestamp does not match as_of.value")
     return timestamp, inferred_date_only, {
         "value": str(value),
         "timestamp": timestamp.isoformat(),
@@ -174,19 +176,25 @@ def _recorded_prediction_hash(config: Mapping[str, Any]) -> str | None:
     return hashes[0]
 
 
-def _validate_prediction_dates(frame: pd.DataFrame, as_of: pd.Timestamp, date_only: bool) -> None:
+def _validate_prediction_dates(
+    frame: pd.DataFrame,
+    as_of: pd.Timestamp,
+    date_only: bool,
+    *,
+    table_label: str = "predictions",
+) -> None:
     if date_only:
         invalid = frame["_timestamp"].lt(as_of.normalize())
     else:
         ambiguous = frame["_date_only"] & frame["_timestamp"].dt.normalize().eq(as_of.normalize())
         if ambiguous.any():
             raise DataValidationError(
-                "predictions contain date-only fixtures on the exact as_of day; temporal order is ambiguous"
+                f"{table_label} contain date-only fixtures on the exact as_of day; temporal order is ambiguous"
             )
         invalid = frame["_timestamp"].lt(as_of)
     if invalid.any():
         raise DataValidationError(
-            "predictions contain fixtures before as_of at input rows "
+            f"{table_label} contain fixtures before as_of at input rows "
             f"{_sample_indices(invalid)}"
         )
 

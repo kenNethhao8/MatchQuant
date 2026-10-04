@@ -14,6 +14,7 @@ from .forecast_report import DISCLAIMER as FORECAST_DISCLAIMER
 from .io import file_sha256, load_matches, write_json
 from .metrics import PROBABILITY_COLUMNS, evaluate_predictions
 from .models import result_from_score
+from .prediction_evidence import load_prediction_evidence
 from .schema import DataValidationError
 from .settlement_report import write_settlement_report
 from .settlement_validation import PREDICTION_REQUIRED_COLUMNS, load_forecast_run
@@ -213,7 +214,7 @@ def settle_forecast_run(
 ) -> dict[str, Any]:
     """Persist one M6 run while leaving all forecast and results inputs untouched."""
 
-    forecast = load_forecast_run(forecast_run_dir)
+    forecast = load_prediction_evidence(forecast_run_dir)
     results_file = Path(results_path).expanduser().resolve()
     if not results_file.is_file():
         raise FileNotFoundError(f"canonical results CSV does not exist: {results_file}")
@@ -221,7 +222,10 @@ def settle_forecast_run(
     results = load_matches(results_file)
     output_root_path = Path(output_root).expanduser().resolve()
     if _path_is_within(output_root_path, forecast["run_dir"]):
-        raise DataValidationError("M6 output root must not be the M4 run directory or one of its children")
+        raise DataValidationError("M6 output root must not be the prediction run directory or one of its children")
+    snapshot_dir = forecast["origin_evidence"].get("snapshot_dir")
+    if snapshot_dir and _path_is_within(output_root_path, Path(snapshot_dir)):
+        raise DataValidationError("M6 output root must not be the M11 snapshot directory or one of its children")
     data_root = Path(r"D:\Codex\matchquant_data").resolve()
     if _path_is_within(output_root_path, data_root):
         raise DataValidationError("M6 must not write under D:\\Codex\\matchquant_data")
@@ -262,6 +266,20 @@ def settle_forecast_run(
 
     result_cutoff = results["_timestamp"].max()
     result_start = results["_timestamp"].min()
+    producer_schema = forecast["producer_schema"]
+    if producer_schema == FORECAST_SCHEMA_VERSION:
+        input_scope = "M4 run_config.json、predictions.csv"
+    else:
+        input_scope = (
+            "M11 run_config.json、predictions.csv、snapshot_manifest.json、model_states.json "
+            "与显式记录的 score-free fixtures"
+        )
+    limitations = [
+        f"M6 只读取显式指定的 {input_scope} 和 M1 canonical 结果 CSV。",
+        "零命中是预期的 unresolved，不代表输入错误；球队别名、改名和模糊匹配不会被猜测。",
+        "指标不是实时预测、投注价值、盈利能力或未来表现证据。",
+        *forecast["limitations"],
+    ]
     config: dict[str, Any] = {
         "schema_version": SETTLEMENT_SCHEMA_VERSION,
         "command": "matchquant settle",
@@ -270,15 +288,20 @@ def settle_forecast_run(
         "as_of": forecast["as_of_meta"],
         "forecast_run": {
             "directory": str(forecast["run_dir"]),
-            "run_config": {"path": str(forecast["config_path"]), "sha256": forecast["config_hash"]},
+            "producer_schema": producer_schema,
+            "run_config": {"path": str(forecast["run_config_path"]), "sha256": forecast["run_config_sha256"]},
             "predictions": {
                 "path": str(forecast["predictions_path"]),
-                "sha256": forecast["prediction_hash"],
+                "sha256": forecast["predictions_sha256"],
                 "rows": int(len(forecast["predictions"])),
-                "schema_version": FORECAST_SCHEMA_VERSION,
+                "schema_version": producer_schema,
                 "hash_evidence_status": forecast["prediction_hash_status"],
             },
             "model": forecast["model_name"],
+            "producer_command": forecast["producer_command"],
+            "model_config": forecast["model_config"],
+            "model_config_sha256": forecast["model_config_sha256"],
+            "origin_evidence": forecast["origin_evidence"],
         },
         "results": {
             "path": str(results_file),
@@ -311,11 +334,7 @@ def settle_forecast_run(
             "matchquant_data_modified": False,
             "active_pointer_updated": False,
         },
-        "limitations": [
-            "M6 只读取显式指定的 M4 run_config.json、predictions.csv 和 M1 canonical 结果 CSV。",
-            "零命中是预期的 unresolved，不代表输入错误；球队别名、改名和模糊匹配不会被猜测。",
-            "指标不是实时预测、投注价值、盈利能力或未来表现证据。",
-        ],
+        "limitations": limitations,
         "disclaimer": DISCLAIMER,
         "forecast_disclaimer": FORECAST_DISCLAIMER,
     }

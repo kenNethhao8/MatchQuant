@@ -263,7 +263,12 @@ M5 只接受用户明确传入的本地 Football-Data.co.uk `E0` 兼容 CSV。�
 
 ## M6：本地预测结算与评估闭环
 
-M6 用一个已经完成的 M4 forecast run 和用户明确指定的本地 M1 canonical 最终赛果 CSV 做一次离线结算。它只读取 run 目录中的 `run_config.json`、`predictions.csv` 以及 `--results` 指定的结果文件；不下载赛果、不调用 `epl-sync`、不写入 `D:\Codex\matchquant_data\`，不更新 active/current pointer，不重跑模型，也不修改任何输入。
+M6 用一个已经完成的预测 run 和用户明确指定的本地 M1 canonical 最终赛果 CSV 做一次离线结算。`settle` 通过统一预测证据适配层（`matchquant.prediction_evidence.load_prediction_evidence`）按 run_config 的真实 `schema_version` 分派两种 producer：
+
+- `m4-forecast-v1`：M4 forecast run。沿用既有 M4 严格校验与 legacy hash 语义；只读取 run 目录中的 `run_config.json`、`predictions.csv` 以及 `--results` 指定的结果文件。
+- `m11-engine-snapshot-predict-v1`：单模型 M11 引擎快照预测 run。额外严格核验 run 与其记录的不可变快照的跨文件一致性：快照 manifest/状态文件 hash、manifest content hash、snapshot_id、逐模型 config/config_sha256/state_sha256（区分整份 state 文件 hash 与单模型 state payload hash）、run 与快照的 as_of（value/timestamp/date_only）一致、`used_data_cutoff` 与 as_of 边界的时序合法（date-only 边界必须严格早于 as_of；完整 history 文件含 as_of 后比赛不误拒），并读取显式记录的原 score-free fixtures 核对实际 hash、行数与逐 fixture 对应关系。多模型 M11 run 与未知 schema 明确拒绝；M11 结算不打开 history CSV 或 history processed manifest，断开历史文件后校验与结算仍可完成。
+
+两种 producer 复用同一个 `settle_predictions` 结算算法：不下载赛果、不调用 `epl-sync`、不写入 `D:\Codex\matchquant_data\`，不更新 active/current pointer，不重跑模型，也不修改任何输入；结算输出 root 不得落入预测 run 目录、M11 快照目录或正式 data root。
 
 手动闭环示例（先完成 M4 forecast）：
 
@@ -293,7 +298,7 @@ python -m matchquant settle `
 
 每次结算会新建唯一的 `m6_settlement_<UTC时间>_<唯一ID>` 目录，保存 `settlement.csv`、`metrics.json`、`run_config.json` 和中文 `settlement_report.md`。身份匹配严格使用 `season + home_team + away_team` 的去首尾空白原文本，不猜测球队别名、不做模糊匹配；唯一命中允许改期并标记 `same_date`/`date_changed`，零命中保留为预期的 `unresolved`，重复命中标记 `ambiguous`。结果早于预测 as-of 的行标记 `time_conflict`，不进入指标；唯一身份的改期结果仍可结算并标记 `date_changed`。`metrics.json` 只对安全结算子集计算 multiclass log loss、三分类 Brier 和 accuracy；零场结算时三项预测指标为 `null`，coverage 按安全结算数/总预测数为 `0`。结果输入仍需由用户通过既有 M2/M2.1 或其他明确的本地 canonical 文件自行获得，M6 本身不导入赛果。
 
-新生成的 M4 run 会在 `run_config.json` 中记录 `predictions.csv` 的 SHA-256；旧 M4 run 会明确记录 `unrecorded_legacy`，不会被 M6 偷改。M6 输出是离线研究审计，不是实时预测、投注建议、盈利承诺或未来表现保证。
+新生成的 M4 run 会在 `run_config.json` 中记录 `predictions.csv` 的 SHA-256；旧 M4 run 会明确记录 `unrecorded_legacy`，不会被 M6 偷改。M11 run 必须记录该 hash，M6 逐字节核验。结算 `run_config.json` 的 `forecast_run` 块记录真实 producer `schema_version` 与 `producer_command`，并新增 `model_config`、`model_config_sha256` 与 `origin_evidence` 字段（M4 记录 producer 声明的 history/selection 证据及其核验状态；M11 记录快照 manifest/state 路径与 hash、快照 lineage 的 history 证据状态和 `used_data_cutoff`）；中文结算报告按真实 producer 标注来源。M6 输出是离线研究审计，不是实时预测、投注建议、盈利承诺或未来表现保证。
 
 ## M8：本地预测发布审计包
 
