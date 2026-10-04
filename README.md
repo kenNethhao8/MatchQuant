@@ -4,12 +4,12 @@ MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预
 
 ## 安装（baseline-v0.1，B00 验证）
 
-不要依赖全局 PATH 上的 `python`；请在项目内建立独立虚拟环境：
+不要依赖全局 PATH 上的 `python`；请在项目内建立独立虚拟环境。`constraints-baseline-v0.1.txt` 固定的依赖（numpy 2.3.5、pandas 3.0.1）要求 **Python >= 3.11**；本轮实际验证的解释器仅为 CPython 3.13.15，其它 3.11+ 版本未在此环境验证：
 
 ```powershell
-# 任选本机可用的 Python 3.10–3.13 解释器创建 .venv（B00 验证使用 CPython 3.13.15）。
-# 本机 py 启动器可用选择器：py -V:Astral/CPython3.13.15；注意 `py -3.13` 不识别 uv 注册的解释器。
-py -V:Astral/CPython3.13.15 -m venv .venv   # 或直接指定解释器：<python.exe> -m venv .venv
+# 使用本机已验证的解释器创建 .venv。本机 py 启动器选择器：py -V:Astral/CPython3.13.15；
+# 注意 `py -3.13` 不识别 uv 注册的解释器。也可直接指定任意 Python >= 3.11 解释器路径。
+py -V:Astral/CPython3.13.15 -m venv .venv   # 或：<python.exe> -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e . -c constraints-baseline-v0.1.txt
 ```
 
