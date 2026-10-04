@@ -2,6 +2,19 @@
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
+## 安装（baseline-v0.1，B00 验证）
+
+不要依赖全局 PATH 上的 `python`；请在项目内建立独立虚拟环境：
+
+```powershell
+# 任选本机可用的 Python 3.10–3.13 解释器创建 .venv（B00 验证使用 CPython 3.13.15）。
+# 本机 py 启动器可用选择器：py -V:Astral/CPython3.13.15；注意 `py -3.13` 不识别 uv 注册的解释器。
+py -V:Astral/CPython3.13.15 -m venv .venv   # 或直接指定解释器：<python.exe> -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e . -c constraints-baseline-v0.1.txt
+```
+
+`constraints-baseline-v0.1.txt` 固定了 B00 实际验证的依赖版本（numpy 2.3.5、pandas 3.0.1）；editable 安装只联网获取依赖，之后所有测试与 `run`/`forecast`/`settle` 等命令均完全离线。后续命令请用 `.\.venv\Scripts\python.exe -m matchquant ...` 替代 README 示例中的 `python -m matchquant ...`。`.venv/` 不提交 Git。
+
 ## 输入格式
 
 CSV 必须包含以下列：

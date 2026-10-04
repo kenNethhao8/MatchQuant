@@ -1,0 +1,9 @@
+# MatchQuant baseline-v0.1 verified dependency constraints (B00, 2026-10-04).
+# Exact versions verified by full offline test suite + synthetic CLI smoke run
+# in D:\matchquant\worktree\.venv (CPython 3.13.15, Windows x86-64).
+# These match the versions used by the independent 2026-10-04 evaluation
+# (numpy 2.3.5, pandas 3.0.1), maximising cross-environment reproducibility.
+# Install with:
+#   .\.venv\Scripts\python.exe -m pip install -e . -c constraints-baseline-v0.1.txt
+numpy==2.3.5
+pandas==3.0.1
