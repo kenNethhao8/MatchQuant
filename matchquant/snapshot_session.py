@@ -107,7 +107,11 @@ def run_snapshot_session(
     )
     output_root_path = ensure_safe_output_root(
         output_root,
-        [snapshot_file, fixtures_file, *([issue_file] if issue_file is not None else [])],
+        [
+            (snapshot_file, "file"),
+            (fixtures_file, "file"),
+            *([(issue_file, "file")] if issue_file is not None else []),
+        ],
     )
     generated_at = utc_now()
     session_dir = new_output_dir(output_root_path, SESSION_DIR_PREFIX)
@@ -184,7 +188,21 @@ def run_snapshot_session(
                 manifest["output_hashes"][key] = None
                 output_errors.append(f"{key}: {exc}")
         if output_errors:
+            # A required session artifact (report or recorded hash) failed to be
+            # written: the session delivery is blocked even when the engineering
+            # stages and the embedded sub-audit completed. The M11 run and audit
+            # evidence stay on disk and are reported as-is.
             manifest["output_write_errors"] = output_errors
+            manifest["stages"]["finalize"] = "failed"
+            manifest["reasons"] = list(manifest["reasons"]) + [
+                "required_artifact_write_failed: " + "; ".join(output_errors)
+            ]
+            manifest["status"] = "blocked"
+            manifest["predictions_usable"] = False
+            manifest["coverage"] = {"status": "not_evaluated", "reasons": ["required_artifact_write_failed"]}
+            manifest["limitations"] = list(manifest["limitations"]) + [
+                "工程阶段与子审计结果按实际保留；但会话必需产物写入失败，交付状态为 blocked，不能当作 ready。"
+            ]
         write_json(manifest, manifest_path)
         return {
             "status": manifest["status"],

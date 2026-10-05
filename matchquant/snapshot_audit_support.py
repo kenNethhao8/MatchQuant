@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .engine_snapshot_status import CURRENT_POINTER_SCHEMA_VERSION
 from .engine_snapshot_support import ENGINE_SNAPSHOT_SCHEMA_VERSION
 from .io import file_sha256
 from .schema import DataValidationError
@@ -95,16 +96,19 @@ def same_recorded_path(left: Any, right: Any) -> bool:
         return False
 
 
-def ensure_safe_output_root(output_root: str | Path, inputs: Sequence[str | Path]) -> Path:
+def ensure_safe_output_root(output_root: str | Path, inputs: Sequence[Any]) -> Path:
     """Reject output roots that collide with formal roots, inputs, or prior sessions.
 
-    For directory inputs (such as a prediction run directory) the root must not be
-    the input itself or inside it; for file inputs the root must not be the file,
-    its containing archive directory, or inside that directory. Being a sibling
-    of an input under a common parent stays allowed. Inputs that do not exist on
-    disk contribute no archive-directory protection (there is nothing to
-    protect), but the root still may not equal such a path. Expected input
-    failures are handled after this check by the structured blocked flow.
+    Each input is either a ``(path, kind)`` pair with ``kind`` in ``{"file", "dir"}``
+    (the authoritative declared type, used regardless of whether the path exists)
+    or a bare ``Path`` whose kind is inferred from the filesystem. Directory
+    inputs (such as a prediction run directory) forbid the root being the input
+    itself or inside it; file inputs forbid the root being the file, its
+    containing archive directory, or inside that directory. Protection never
+    depends on the input existing, so a missing run or fixture cannot be used to
+    place outputs inside the declared input directory. Being a sibling of an
+    input under a common parent stays allowed. Expected input failures are
+    handled after this check by the structured blocked flow.
     """
 
     root = Path(output_root).expanduser().resolve()
@@ -113,13 +117,17 @@ def ensure_safe_output_root(output_root: str | Path, inputs: Sequence[str | Path
             raise DataValidationError(
                 f"output root must not be inside the formal data or runs root: {root}"
             )
-    for raw in inputs:
-        input_path = Path(raw).expanduser().resolve()
+    for item in inputs:
+        if isinstance(item, tuple):
+            input_path, kind = Path(item[0]).expanduser().resolve(), item[1]
+            if kind not in {"file", "dir"}:
+                raise ValueError(f"input kind must be 'file' or 'dir': {kind!r}")
+        else:
+            input_path = Path(item).expanduser().resolve()
+            kind = "dir" if input_path.is_dir() else "file"
         if root == input_path:
             raise DataValidationError(f"output root cannot be an input path: {root}")
-        if not input_path.exists():
-            continue
-        if input_path.is_dir():
+        if kind == "dir":
             if input_path in root.parents:
                 raise DataValidationError(f"output root cannot be inside an input directory: {root}")
         else:
@@ -235,7 +243,11 @@ def _bind_hash(value: Any, expected: Any, label: str) -> None:
 
 
 def _validated_pointer_record(pointer: Any) -> Mapping[str, Any]:
-    """Type-check one valid M12 pointer record and recompute its internal equalities."""
+    """Type-check one valid M12 pointer record and recompute its internal equalities.
+
+    Every recorded value is validated against its actual expected type and the
+    fixed pointer schema; key presence alone is never accepted as evidence.
+    """
 
     pointer = _require_mapping(pointer, "current_pointer record")
     _require_exact_keys(pointer, _M12_POINTER_KEYS, "current_pointer record")
@@ -243,6 +255,15 @@ def _validated_pointer_record(pointer: Any) -> Mapping[str, Any]:
         raise DataValidationError(
             "issue evidence current_pointer record is not valid; a valid pointer record is required here"
         )
+    if _require_text(pointer.get("schema_version"), "current_pointer.schema_version") != (
+        CURRENT_POINTER_SCHEMA_VERSION
+    ):
+        raise DataValidationError(
+            "issue evidence current_pointer record schema_version must be "
+            f"{CURRENT_POINTER_SCHEMA_VERSION}: {pointer.get('schema_version')!r}"
+        )
+    _require_text(pointer.get("path"), "current_pointer.path")
+    _require_hash(pointer.get("sha256"), "current_pointer.sha256")
     pointer_dataset_version = _require_text(pointer.get("dataset_version"), "current_pointer.dataset_version")
     pointer_canonical = _require_mapping(pointer.get("canonical"), "current_pointer.canonical")
     _require_exact_keys(pointer_canonical, _M12_POINTER_CANONICAL_KEYS, "current_pointer.canonical")
@@ -258,6 +279,7 @@ def _validated_pointer_record(pointer: Any) -> Mapping[str, Any]:
     _require_text(pointer_canonical.get("path"), "current_pointer.canonical.path")
     pointer_manifest = _require_mapping(pointer.get("processed_manifest"), "current_pointer.processed_manifest")
     _require_exact_keys(pointer_manifest, _M12_POINTER_MANIFEST_KEYS, "current_pointer.processed_manifest")
+    _require_text(pointer_manifest.get("path"), "current_pointer.processed_manifest.path")
     _require_hash(pointer_manifest.get("sha256"), "current_pointer.processed_manifest.sha256")
     _bind_optional_text(
         pointer_manifest.get("dataset_version"),
@@ -448,6 +470,7 @@ def load_issue_evidence(
             "issue evidence snapshot record schema_version must be "
             f"{ENGINE_SNAPSHOT_SCHEMA_VERSION}: {snapshot_block.get('schema_version')!r}"
         )
+    _require_text(snapshot_block.get("path"), "snapshot.path")
     record_snapshot_id = _require_text(snapshot_block.get("snapshot_id"), "snapshot.snapshot_id")
     if record_snapshot_id != snapshot_id:
         raise DataValidationError(
@@ -546,6 +569,14 @@ def load_issue_evidence(
                 f"issue evidence records {record_status} without reasons; the record is internally inconsistent"
             )
         pointer_is_valid_record = isinstance(pointer, Mapping) and pointer.get("status") == "valid"
+        if record_status == "stale":
+            # Per the M12 status semantics, stale requires both records valid and a
+            # real comparison mismatch; a pointer-invalid record is unverifiable.
+            if not pointer_is_valid_record:
+                raise DataValidationError(
+                    "issue evidence records stale without a valid current pointer record; a record whose "
+                    "pointer evidence is invalid or missing is unverifiable, not stale"
+                )
         if pointer_is_valid_record:
             pointer = _validated_pointer_record(pointer)
             if comparison is None:

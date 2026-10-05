@@ -533,7 +533,11 @@ def verify_snapshot_run(
     )
     output_root_path = ensure_safe_output_root(
         output_root,
-        [run_dir_path, *([issue_file] if issue_file is not None else []), *_preflight_recorded_paths(run_dir_path)],
+        [
+            (run_dir_path, "dir"),
+            *([(issue_file, "file")] if issue_file is not None else []),
+            *((path, "file") for path in _preflight_recorded_paths(run_dir_path)),
+        ],
     )
     audited_at = utc_now()
     audit_dir = new_output_dir(output_root_path, AUDIT_DIR_PREFIX)

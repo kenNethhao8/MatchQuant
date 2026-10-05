@@ -676,6 +676,80 @@ class IssueEvidenceTests(SnapshotSessionTestBase):
                     )
             self.assertEqual(session_exit.exception.code, 1)
 
+    def test_issue_metadata_values_and_state_classification_are_validated(self):
+        """R1 residual: exact keys alone are not evidence — recorded values must have
+        real types and fixed schema values, and stale/unverifiable must follow the
+        M12 status machine (pointer-invalid + no comparison is never stale)."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = "frequency"
+            run_dir, built, _ = self._m11_run(root, model)
+            base_payload = json.loads(
+                self._fresh_issue_evidence(root, built).read_text(encoding="utf-8")
+            )
+
+            def unknown_pointer_schema(payload: dict) -> None:
+                payload["current_pointer"]["schema_version"] = "invalid-pointer-schema"
+
+            def pointer_bad_sha_type(payload: dict) -> None:
+                payload["current_pointer"]["sha256"] = []
+
+            def pointer_missing_path_value(payload: dict) -> None:
+                payload["current_pointer"]["path"] = None
+
+            def snapshot_bad_path_type(payload: dict) -> None:
+                payload["snapshot"]["path"] = []
+
+            def stale_with_invalid_pointer(payload: dict) -> None:
+                payload["status"] = "stale"
+                payload["current_pointer"]["status"] = "invalid"
+                payload.pop("comparison")
+                payload["reasons"] = ["current_pointer_invalid"]
+
+            variants = (
+                ("fresh_pointer_unknown_schema", unknown_pointer_schema, "schema_version must be"),
+                ("fresh_pointer_bad_sha_type", pointer_bad_sha_type, "must be a 64-character SHA-256"),
+                ("fresh_pointer_missing_path_value", pointer_missing_path_value, "current_pointer.path"),
+                ("fresh_snapshot_bad_path_type", snapshot_bad_path_type, "snapshot.path"),
+                (
+                    "stale_with_invalid_pointer_and_no_comparison",
+                    stale_with_invalid_pointer,
+                    "is unverifiable, not stale",
+                ),
+            )
+            issue_dir = root / "runtime" / "inputs" / "residual-issues"
+            for name, mutator, marker in variants:
+                payload = json.loads(json.dumps(base_payload))
+                mutator(payload)
+                issue_path = issue_dir / f"{name}.json"
+                write_json(payload, issue_path)
+                with self.subTest(variant=name):
+                    verification = verify_snapshot_run(
+                        run_dir,
+                        output_root=root / "runtime" / "audits-residual",
+                        issue_evidence_path=issue_path,
+                    )
+                    self.assertEqual(verification["status"], "blocked", name)
+                    reason = verification["reasons"][0]
+                    self.assertTrue(reason.startswith("issue_evidence_invalid:"), reason)
+                    self.assertIn(marker, reason)
+                    self.assertFalse(verification["predictions_usable"])
+                    with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                        with self.assertRaises(SystemExit) as verify_exit:
+                            main(
+                                [
+                                    "snapshot-run-verify",
+                                    "--forecast-run",
+                                    str(run_dir),
+                                    "--output-root",
+                                    str(root / "runtime" / "audits-residual-cli"),
+                                    "--issue-evidence",
+                                    str(issue_path),
+                                ]
+                            )
+                    self.assertEqual(verify_exit.exception.code, 1, name)
+
 
 class AuditNegativeTests(SnapshotSessionTestBase):
     def test_probability_tamper_with_synced_recorded_hash_is_rejected_by_repredict(self):
@@ -839,6 +913,64 @@ class AuditNegativeTests(SnapshotSessionTestBase):
             report = Path(verification["prediction_audit_report_path"]).read_text(encoding="utf-8")
             self.assertIn("blocked", report)
 
+    def test_output_inside_missing_input_paths_is_refused_before_creation(self):
+        """R2 residual B: declared input types protect missing runs and missing files
+        too — the output guard never relies on the input existing."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir, built, fixtures_path = self._m11_run(root, "frequency")
+            missing_run = root / "runtime" / "ghost_prediction_run"
+            self.assertFalse(missing_run.exists())
+            with self.assertRaises((DataValidationError, OSError)):
+                verify_snapshot_run(missing_run, output_root=missing_run / "audit_outputs")
+            self.assertFalse(missing_run.exists())
+            self.assertFalse((missing_run / "audit_outputs").exists())
+
+            inputs_dir = fixtures_path.parent
+            with self.assertRaises((DataValidationError, OSError)):
+                run_snapshot_session(
+                    built["snapshot_manifest_path"],
+                    inputs_dir / "missing_fixtures.csv",
+                    mode="replay",
+                    output_root=inputs_dir / "sessions",
+                )
+            self.assertFalse((inputs_dir / "sessions").exists())
+            self.assertFalse((inputs_dir / "missing_fixtures.csv").exists())
+
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as refused_exit:
+                    main(
+                        [
+                            "snapshot-run-verify",
+                            "--forecast-run",
+                            str(missing_run),
+                            "--output-root",
+                            str(missing_run / "audit_outputs_cli"),
+                        ]
+                    )
+            self.assertEqual(refused_exit.exception.code, 1)
+            self.assertFalse(missing_run.exists())
+
+            missing_run_outside = root / "runtime" / "audits-ghost"
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as blocked_exit:
+                    main(
+                        [
+                            "snapshot-run-verify",
+                            "--forecast-run",
+                            str(missing_run),
+                            "--output-root",
+                            str(missing_run_outside),
+                        ]
+                    )
+            self.assertEqual(blocked_exit.exception.code, 1)
+            ghost_audits = list(missing_run_outside.iterdir())
+            self.assertEqual(len(ghost_audits), 1)
+            payload = json.loads((ghost_audits[0] / "prediction_audit.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "blocked")
+            self.assertIn("run_directory_does_not_exist", payload["reasons"][0])
+
     def test_unsafe_output_roots_are_refused_without_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -860,7 +992,11 @@ class AuditNegativeTests(SnapshotSessionTestBase):
                     with self.assertRaises((DataValidationError, OSError)):
                         ensure_safe_output_root(
                             output_root,
-                            [run_dir, Path(built["snapshot_manifest_path"]), fixtures_path],
+                            [
+                                (run_dir, "dir"),
+                                (Path(built["snapshot_manifest_path"]), "file"),
+                                (fixtures_path, "file"),
+                            ],
                         )
                     before = set(run_dir.parent.iterdir())
                     with self.assertRaises((DataValidationError, OSError)):
@@ -1095,14 +1231,14 @@ class SessionContractTests(SnapshotSessionTestBase):
             self.assertEqual(payload["stages"]["repredict"], "not_run")
             self.assertTrue(Path(verification["prediction_audit_report_path"]).is_file())
 
-    def test_report_write_failure_is_recorded_honestly(self):
+    def test_required_report_write_failure_blocks_session(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             built = self._build_snapshot(root, "frequency")
             fixtures_path = self._write_fixtures(root)
 
             def failing_report(path, manifest):
-                raise OSError("simulated report write failure")
+                raise PermissionError("simulated required session report write failure")
 
             with patch(
                 "matchquant.snapshot_session.write_snapshot_session_report",
@@ -1114,15 +1250,41 @@ class SessionContractTests(SnapshotSessionTestBase):
                     mode="replay",
                     output_root=root / "runtime" / "sessions",
                 )
-            self.assertEqual(session["status"], "ready")
-            self.assertIn("session_report", session["output_write_errors"][0])
+                self.assertEqual(session["status"], "blocked")
+                self.assertFalse(session["predictions_usable"])
+                self.assertIn("required_artifact_write_failed", session["reasons"][0])
+                self.assertIn("session_report", session["output_write_errors"][0])
+                stderr = io_module.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
+                    with self.assertRaises(SystemExit) as blocked_exit:
+                        main(
+                            [
+                                "snapshot-session",
+                                "--snapshot-manifest",
+                                str(built["snapshot_manifest_path"]),
+                                "--fixtures",
+                                str(fixtures_path),
+                                "--mode",
+                                "replay",
+                                "--output-root",
+                                str(root / "runtime" / "sessions-cli"),
+                            ]
+                        )
+                self.assertEqual(blocked_exit.exception.code, 1)
             manifest = json.loads(
                 Path(session["session_manifest_path"]).read_text(encoding="utf-8")
             )
-            self.assertTrue(manifest["output_write_errors"])
+            self.assertEqual(manifest["status"], "blocked")
+            self.assertFalse(manifest["predictions_usable"])
+            self.assertEqual(manifest["stages"]["finalize"], "failed")
+            self.assertEqual(manifest["stages"]["prediction"], "completed")
+            self.assertEqual(manifest["stages"]["audit"], "completed")
+            self.assertEqual(manifest["audit"]["status"], "needs_review")
+            self.assertTrue(manifest["prediction_run"])
             self.assertIsNone(manifest["output_hashes"]["session_report"])
             self.assertFalse(Path(session["session_report_path"]).exists())
             self.assertTrue(Path(session["session_manifest_path"]).is_file())
+            self.assertTrue(Path(session["prediction_audit_path"]).is_file())
 
     def test_input_files_unchanged_across_blocked_and_successful_audits(self):
         with tempfile.TemporaryDirectory() as temporary:
