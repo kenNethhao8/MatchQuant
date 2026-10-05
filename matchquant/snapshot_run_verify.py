@@ -6,6 +6,14 @@ original snapshot and original score-free fixtures inside an isolated temporary
 directory, compares probabilities with ``atol=1e-12, rtol=0``, and verifies the
 input inventory is unchanged. The original run is never overwritten and the
 recomputed files are never presented as a new version of it.
+
+B04 bundle mode: when an explicit ``bundle_manifest_path`` is provided, the
+bundle is re-verified from its own bytes first, the audited run must bind the
+bundle's derived snapshot (paths and hashes), the issue evidence comes from the
+bundle's internal copy of the original fresh M12 record through the derived
+manifest lineage bridge, and every bundle payload file is re-hashed unchanged at
+the end. The public API only accepts paths; callers can never hand in a
+pre-verified context.
 """
 
 from __future__ import annotations
@@ -23,6 +31,11 @@ from .forecast import FORECAST_PREDICTION_COLUMNS
 from .io import file_sha256, write_json
 from .metrics import PROBABILITY_COLUMNS
 from .prediction_evidence import load_prediction_evidence
+from .runtime_bundle_validation import (
+    BUNDLE_LINEAGE_VALIDATION_KIND,
+    check_bundle_payload_integrity,
+    verify_runtime_bundle,
+)
 from .schema import DataValidationError
 from .settlement_validation import _read_prediction_csv
 from .snapshot_audit_support import (
@@ -33,6 +46,7 @@ from .snapshot_audit_support import (
     load_issue_evidence,
     missing_issue_evidence,
     new_output_dir,
+    same_recorded_path,
     utc_now,
 )
 from .snapshot_report import AUDIT_SCOPE_TEXT, write_snapshot_audit_report
@@ -106,6 +120,30 @@ def _expected_goals_equal(left: pd.DataFrame, right: pd.DataFrame) -> bool:
     return True
 
 
+def _bundle_audit_block(bundle_context: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if bundle_context is None:
+        return None
+    return {
+        "bundle_manifest_path": bundle_context["bundle_manifest_path"],
+        "bundle_manifest_file_sha256": bundle_context["bundle_manifest_file_sha256"],
+        "bundle_root": bundle_context["bundle_root"],
+        "validation_kind": BUNDLE_LINEAGE_VALIDATION_KIND,
+        "snapshot_id": bundle_context["snapshot_id"],
+        "original": bundle_context["original"],
+        "derived": {
+            "snapshot_id": bundle_context["derived"]["snapshot_id"],
+            "relative_path": bundle_context["derived"]["relative_path"],
+            "resolved_manifest_path": bundle_context["derived"]["resolved_manifest_path"],
+            "file_sha256": bundle_context["derived"]["file_sha256"],
+            "content_sha256": bundle_context["derived"]["content_sha256"],
+            "state_sha256": bundle_context["derived"]["state_sha256"],
+        },
+        "state_file_sha256": bundle_context["derived"]["state_sha256"],
+        "fresh_at_issue": bool(bundle_context["issue_validation"]["fresh_at_issue"]),
+        "active_link_status": bundle_context["issue_validation"]["active_link_status"],
+    }
+
+
 def _blocked_audit(
     *,
     run_dir: Path,
@@ -119,6 +157,7 @@ def _blocked_audit(
     snapshot_block: dict[str, Any] | None,
     issue_block: dict[str, Any] | None,
     inputs_block: dict[str, Any],
+    bundle_block: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     audit: dict[str, Any] = {
         "schema_version": AUDIT_SCHEMA_VERSION,
@@ -143,6 +182,8 @@ def _blocked_audit(
             "audit_report": str(output_dir / "prediction_audit.md"),
         },
     }
+    if bundle_block is not None:
+        audit["bundle"] = bundle_block
     _write_audit_files(audit, output_dir)
     return audit
 
@@ -162,9 +203,20 @@ def execute_snapshot_run_audit(
     audited_at: str,
     output_dir: Path,
     audit_command: str,
+    bundle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the shared read-only audit and write ``prediction_audit.json``/``.md``."""
+    """Run the shared read-only audit and write ``prediction_audit.json``/``.md``.
 
+    ``bundle_context`` is the result of a fresh ``verify_runtime_bundle`` call
+    made by the caller in the same run; it is an internal shared-implementation
+    channel, never a caller-supplied "verified" flag. The public API only takes
+    paths.
+    """
+
+    if bundle_context is not None and issue_evidence_path is not None:
+        raise ValueError(
+            "bundle audits read the issue evidence inside the verified bundle; issue_evidence_path must be None"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     stages = {
         "evidence_load": "not_run",
@@ -173,7 +225,10 @@ def execute_snapshot_run_audit(
         "repredict": "not_run",
         "inputs_unchanged": "not_run",
     }
+    if bundle_context is not None:
+        stages["bundle_verify"] = "completed"
     checks: list[dict[str, str]] = []
+    bundle_block = _bundle_audit_block(bundle_context)
 
     def fail(
         reason: str,
@@ -195,6 +250,7 @@ def execute_snapshot_run_audit(
             snapshot_block=snapshot_block,
             issue_block=issue_block,
             inputs_block=inputs_block or {},
+            bundle_block=bundle_block,
         )
 
     run_config_path = run_dir / "run_config.json"
@@ -281,8 +337,62 @@ def execute_snapshot_run_audit(
         )
     )
 
+    if bundle_context is not None:
+        derived = bundle_context["derived"]
+        binding_ok = (
+            same_recorded_path(str(origin["snapshot_manifest_path"]), derived["resolved_manifest_path"])
+            and str(origin["snapshot_manifest_sha256"]).casefold() == str(derived["file_sha256"]).casefold()
+            and str(origin["state_sha256"]).casefold() == str(derived["state_sha256"]).casefold()
+            and str(origin["snapshot_id"]) == str(bundle_context["snapshot_id"])
+        )
+        if not binding_ok:
+            checks.append(
+                {
+                    "check": "bundle_run_binding",
+                    "status": "failed",
+                    "detail": (
+                        f"run manifest={origin['snapshot_manifest_path']} hash={origin['snapshot_manifest_sha256']}; "
+                        f"bundle derived={derived['resolved_manifest_path']} hash={derived['file_sha256']}"
+                    ),
+                }
+            )
+            return fail(
+                "bundle_run_binding_mismatch: the audited run does not bind this bundle's derived snapshot "
+                "(path, manifest hash, state hash, and snapshot_id must all match the bundle records)"
+            )
+        checks.append(
+            {
+                "check": "bundle_run_binding",
+                "status": "passed",
+                "detail": "the run binds the bundle derived manifest path, file hash, and state hash",
+            }
+        )
+        checks.append(
+            {
+                "check": "bundle_verification",
+                "status": "passed",
+                "detail": (
+                    "the whole bundle was re-verified from its own bytes at audit start; "
+                    f"validation_kind={BUNDLE_LINEAGE_VALIDATION_KIND}"
+                ),
+            }
+        )
+
     issue_block: dict[str, Any]
-    if issue_evidence_path is not None:
+    if bundle_context is not None:
+        issue_block = dict(bundle_context["issue_validation"])
+        stages["issue_evidence"] = "completed"
+        checks.append(
+            {
+                "check": "issue_evidence_validation",
+                "status": "passed",
+                "detail": (
+                    f"record_status={issue_block['record_status']}; the original issue record is bound to the "
+                    "original manifest hash inside the verified bundle, never to the derived manifest hash"
+                ),
+            }
+        )
+    elif issue_evidence_path is not None:
         if not Path(issue_evidence_path).is_file():
             stages["issue_evidence"] = "failed"
             checks.append(
@@ -338,6 +448,8 @@ def execute_snapshot_run_audit(
     }
     if issue_evidence_path is not None:
         inventory_paths["issue_evidence"] = Path(issue_evidence_path)
+    if bundle_context is not None:
+        inventory_paths["bundle_manifest"] = Path(bundle_context["bundle_manifest_path"])
     inventory, inventory_errors = _safe_hash_inventory(inventory_paths)
     if inventory_errors:
         stages["input_inventory"] = "failed"
@@ -476,6 +588,32 @@ def execute_snapshot_run_audit(
             inputs_block=inventory,
         )
 
+    if bundle_context is not None:
+        stages["bundle_files_unchanged"] = "not_run"
+        bundle_ok, bundle_errors, _recorded = check_bundle_payload_integrity(
+            Path(bundle_context["bundle_root"]), bundle_context["files"]
+        )
+        if not bundle_ok:
+            stages["bundle_files_unchanged"] = "failed"
+            checks.append(
+                {
+                    "check": "bundle_files_unchanged",
+                    "status": "failed",
+                    "detail": "; ".join(bundle_errors),
+                }
+            )
+            return fail(
+                "bundle_files_changed_during_audit: every bundle file must hash unchanged across the audit"
+            )
+        stages["bundle_files_unchanged"] = "completed"
+        checks.append(
+            {
+                "check": "bundle_files_unchanged",
+                "status": "passed",
+                "detail": f"{len(bundle_context['files'])} payload files re-hashed unchanged",
+            }
+        )
+
     reasons: list[str] = []
     if issue_block["record_status"] == "missing":
         reasons.append("issue_evidence_missing")
@@ -510,6 +648,8 @@ def execute_snapshot_run_audit(
             "audit_report": str(output_dir / "prediction_audit.md"),
         },
     }
+    if bundle_block is not None:
+        audit["bundle"] = bundle_block
     _write_audit_files(audit, output_dir)
     return audit
 
@@ -519,22 +659,33 @@ def verify_snapshot_run(
     *,
     output_root: str | Path,
     issue_evidence_path: str | Path | None = None,
+    bundle_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Audit one existing single-model M11 prediction run and write a new audit directory.
 
     Output isolation is validated first; the unique audit directory is created
     before input validation so that expected input/IO failures leave structured
-    blocked JSON/report artifacts under the safe writable output.
+    blocked JSON/report artifacts under the safe writable output. In bundle mode
+    the bundle manifest is mutually exclusive with ``issue_evidence_path`` and
+    the whole bundle is re-verified from its own bytes before the audit runs.
     """
 
+    if bundle_manifest_path is not None and issue_evidence_path is not None:
+        raise ValueError(
+            "bundle audits read the issue evidence inside the verified bundle; issue_evidence_path must be None"
+        )
     run_dir_path = Path(run_dir).expanduser().resolve()
     issue_file = (
         Path(issue_evidence_path).expanduser().resolve() if issue_evidence_path is not None else None
+    )
+    bundle_file = (
+        Path(bundle_manifest_path).expanduser().resolve() if bundle_manifest_path is not None else None
     )
     output_root_path = ensure_safe_output_root(
         output_root,
         [
             (run_dir_path, "dir"),
+            *([(bundle_file.parent, "dir")] if bundle_file is not None else []),
             *([(issue_file, "file")] if issue_file is not None else []),
             *((path, "file") for path in _preflight_recorded_paths(run_dir_path)),
         ],
@@ -578,12 +729,58 @@ def verify_snapshot_run(
             "predictions_usable": audit["predictions_usable"],
             "manifest": audit,
         }
+    bundle_context = None
+    if bundle_file is not None:
+        bundle_verification = verify_runtime_bundle(bundle_file)
+        if bundle_verification["status"] != "ready":
+            reasons = [f"bundle_verification_failed: {reason}" for reason in bundle_verification["reasons"]]
+            stages = {
+                "bundle_verify": "failed",
+                "evidence_load": "not_run",
+                "issue_evidence": "not_run",
+                "input_inventory": "not_run",
+                "repredict": "not_run",
+                "inputs_unchanged": "not_run",
+            }
+            audit = _blocked_audit(
+                run_dir=run_dir_path,
+                audit_command="matchquant snapshot-run-verify",
+                audited_at=audited_at,
+                output_dir=audit_dir,
+                reasons=reasons,
+                stages=stages,
+                checks=[
+                    {
+                        "check": "bundle_verification",
+                        "status": "failed",
+                        "detail": "; ".join(bundle_verification["reasons"]),
+                    }
+                ],
+                run_block={"run_dir": str(run_dir_path)},
+                snapshot_block=None,
+                issue_block=None,
+                inputs_block={},
+                bundle_block=_bundle_audit_block(bundle_verification),
+            )
+            return {
+                "status": audit["status"],
+                "reasons": audit["reasons"],
+                "audit_dir": str(audit_dir),
+                "prediction_audit_path": str(audit_dir / "prediction_audit.json"),
+                "prediction_audit_sha256": file_sha256(audit_dir / "prediction_audit.json"),
+                "prediction_audit_report_path": str(audit_dir / "prediction_audit.md"),
+                "run_dir": str(run_dir_path),
+                "predictions_usable": audit["predictions_usable"],
+                "manifest": audit,
+            }
+        bundle_context = bundle_verification
     audit = execute_snapshot_run_audit(
         run_dir=run_dir_path,
         issue_evidence_path=issue_file,
         audited_at=audited_at,
         output_dir=audit_dir,
         audit_command="matchquant snapshot-run-verify",
+        bundle_context=bundle_context,
     )
     audit_json_path = audit_dir / "prediction_audit.json"
     return {

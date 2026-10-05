@@ -480,6 +480,42 @@ python -m matchquant snapshot-run-verify `
 
 状态与退出码（正常解析后与 JSON 状态一致）：`ready` 退出 0（replay 工程通过，或 standalone 审计工程通过且已关联的历史发行记录 fresh）；`needs_review` 退出 2（standalone 审计工程通过但发行证据缺失/stale/unverifiable，或 research 工程通过但覆盖未证明）；`blocked` 退出 1（任一工程校验失败、输入/IO 错误或已提供证据损坏；此时保留结构化失败产物，`predictions_usable=false`）。replay 会话可在自身 `ready` 的同时保留 `needs_review` 的子审计状态与理由，两者同时显示，子审计不会被升格。输出根不得位于输入文件/目录内、既有 session/audit 或 M11 证据目录内，也不得写正式 `D:\Codex\matchquant_data` / `D:\Codex\matchquant_runs`；输入类型（run 为目录、snapshot/fixtures/issue 为文件）由调用方声明，不依赖文件是否存在，因此缺失的 run 或 fixture 也不能被用来把输出放进其声明的目录内。此类拒绝在创建任何文件前发生，stderr 说明原因且不会有失败报告。安全可写输出下，缺 snapshot/fixtures/run_config/显式 issue 证据、输入读取或清单 hash 失败等预期输入/IO 错误会先创建唯一目录再落入结构化 blocked 流程：JSON 与中文报告保留 failed/not_run 阶段、真实输入路径、unavailable hash 与不可用概率说明，stderr 不会把这类输入错误说成"输出被拒绝"。必需产物（中文报告或已记录产物的 hash 读取）写入失败时，会话整体为 `blocked`（退出 1、`predictions_usable=false`）：已完成的工程阶段、合法 M11 run 与子审计结果按实际保留并与会话交付失败明确区分，`output_write_errors` 记录未能保存的部分；manifest 本身无法写时抛出预期 IO 异常，stderr 诚实列出已有目录与产物，不伪造完整交付。注意区分：缺参数等 argparse 使用错误仍是既有 usage/退出 2，它不代表产生了 needs_review 审计。结算继续使用既有 `settle` 命令，传入会话引用的实际 M11 run 目录与独立赛果文件，不要把会话目录冒充 prediction run。
 
+## 可迁移运行包（B04）
+
+B04 在 B03 之上新增"可迁移运行包"：把一个单模型快照与其发行时 fresh 的 M12 记录封装成一个自包含目录。包迁移到不同绝对目录、原研究端文件（快照、state、history、processed manifest、pointer、原 issue JSON）全部断开后，验证、预测会话、运行审计与结算依然离线完成，概率与原快照/M4 参考 `atol=1e-12, rtol=0` 一致。运行端只从包内相对路径解析文件，不存在回退到来源绝对路径的通道。
+
+```powershell
+# 研究端构建（输入只读；fresh 发行记录是唯一入口）
+python -m matchquant runtime-bundle-build `
+  --snapshot-manifest <单模型 M11 snapshot_manifest.json> `
+  --issue-audit <绑定该快照且 fresh 的 M12 snapshot_status.json> `
+  --output-root <作业输出根（必填）>
+
+# 只读验证（可在任意目录、迁移后执行）
+python -m matchquant runtime-bundle-verify --bundle-manifest <包根>\bundle_manifest.json
+
+# 包内预测会话（与裸 --snapshot-manifest 互斥；包内发行记录不可被 --issue-evidence 覆盖）
+python -m matchquant snapshot-session `
+  --bundle-manifest <包根>\bundle_manifest.json `
+  --fixtures <score-free fixture CSV> `
+  --mode replay `
+  --output-root <会话输出根（必填）>
+
+# 对包内派生快照产生的 M11 run 做独立审计
+python -m matchquant snapshot-run-verify `
+  --forecast-run <M11 prediction run 目录> `
+  --bundle-manifest <包根>\bundle_manifest.json `
+  --output-root <审计输出根（必填）>
+```
+
+包内布局（schema `baseline-runtime-bundle-v1`）：`bundle_manifest.json`（载荷文件相对路径/大小/SHA-256 清单，不记录自身最终 hash，包体无签名）；`snapshot/<原 snapshot_id>/` 下派生 manifest（由既有 writer 生成，仅按合同修改固定路径叶子 `state.path`、`outputs.*` 并重算内容 hash，其余字段与原 manifest 深度一致）与原字节 `model_states.json`；`evidence/original_snapshot_manifest.json` 与 `evidence/issue_audit.json` 为原 manifest 与原 M12 记录的字节副本（来源路径仅为 provenance，从不执行）；`team_index.json`（`baseline-team-index-v1`，从严格加载的 state 确定性导出）；`snapshot_report.md`（派生说明）与 `RUN.md`。构建作业的 manifest/报告保存在包外作业目录；`bundle_manifest.json` 最后写入，未完成包不标记可用。解压后全部实际文件之和 ≤5 MiB；超限输出 blocked 候选与逐文件大小说明，不静默删字段。
+
+`runtime-bundle-build` 只接受已严格绑定原快照且 `fresh` 的发行记录（stale/unverifiable/损坏/指向其他快照一律 blocked）；`runtime-bundle-verify` 只读重算全部证据：包清单路径（拒绝绝对/盘符/UNC/越界/ADS/重复/缺失/多余/reparse 对象与可执行文件）、原 manifest 副本的 file/content hash 与完整 JSON 形状、派生快照经既有严格 loader（不放宽旧 M11 校验）、原副本与派生 manifest 的实际字段 diff 仅限合同固定叶子、单模型 config/payload hash 一致、原 issue 副本经 B03 `load_issue_evidence` 以原 manifest hash 重新核验（仍要求 fresh），以及 team index 从 state 重算比对（篡改并同步外部 hash 也不能通过）。verify 不依赖包外来源，不读取原研究端路径，不自动解压 ZIP，也不发布。
+
+`snapshot-session --bundle-manifest` 先对整个包重新 verify，再从包内派生快照预测；嵌入审计通过派生桥（`bundle_original_issue_via_derived_manifest_lineage`）展示原/派生两套 manifest hash 的绑定关系——原 issue 始终绑定原 manifest hash，不能改写为派生 hash，也不能把原 issue 当作派生 manifest 的裸 issue 参数（B03 裸语义保持严格拒绝）。会话输出不得位于整个 bundle 目录内；每次运行所有包内文件起终 hash 不变，变化即 blocked。Elo/Poisson 对未知球队使用既有先验并在会话报告中标注 `unseen_home_teams`/`unseen_away_teams`/`unseen_team_prior`（仅注释，不修改预测列、run schema、模型配置或概率）；frequency 没有球队学习状态，声明全局频率，不把空球队清单当作花名册。已知球队不证明其仍参加当前赛季。`fresh_at_issue` 只表示原发行记录经派生桥关联，`active_link_status` 固定 `not_checked_in_runtime`；research 会话保持 `needs_review`。已经生成的 M11 run 继续记录其当时实际绝对路径；迁移后在迁移目录生成新 run，不就地重写旧 run。整个包没有签名来源认证：完全一致的伪造包体无法被 verify 发现，hash 只证明本次输入一致性。
+
+
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。

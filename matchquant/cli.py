@@ -27,6 +27,8 @@ from .schema import DataValidationError
 from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
 from .settlement import settle_forecast_run
 from .release_verify import verify_release
+from .runtime_bundle import build_runtime_bundle
+from .runtime_bundle_validation import verify_runtime_bundle
 from .snapshot_run_verify import verify_snapshot_run
 from .snapshot_session import run_snapshot_session
 
@@ -131,16 +133,24 @@ def _parser() -> argparse.ArgumentParser:
         "snapshot-session",
         help="run one offline single-model M11 snapshot prediction session with a read-only audit",
     )
-    snapshot_session.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
+    session_source = snapshot_session.add_mutually_exclusive_group(required=True)
+    session_source.add_argument(
+        "--snapshot-manifest", type=Path, default=None,
+        help="explicit M11 snapshot_manifest.json (bare mode)",
+    )
+    session_source.add_argument(
+        "--bundle-manifest", type=Path, default=None,
+        help="explicit runtime bundle_manifest.json (B04 bundle mode; mutually exclusive with --snapshot-manifest)",
+    )
     snapshot_session.add_argument("--fixtures", type=Path, required=True, help="explicit score-free fixture CSV")
     snapshot_session.add_argument("--mode", choices=["replay", "research"], default="replay", help="replay (retrospective) or research (pending coverage review)")
     snapshot_session.add_argument(
         "--output-root", type=Path, required=True,
-        help="root for the new unique session directory (must be outside formal roots and inputs)",
+        help="root for the new unique session directory (must be outside formal roots, inputs, and the bundle)",
     )
     snapshot_session.add_argument(
         "--issue-evidence", type=Path, default=None,
-        help="optional M12 snapshot_status.json (m12-engine-snapshot-status-v1)",
+        help="optional M12 snapshot_status.json (bare mode only; bundle mode reads the bundled record)",
     )
     snapshot_verify = subparsers.add_parser(
         "snapshot-run-verify",
@@ -149,12 +159,35 @@ def _parser() -> argparse.ArgumentParser:
     snapshot_verify.add_argument("--forecast-run", type=Path, required=True, help="completed single-model M11 snapshot prediction run directory")
     snapshot_verify.add_argument(
         "--output-root", type=Path, required=True,
-        help="root for the new unique audit directory (must be outside formal roots and inputs)",
+        help="root for the new unique audit directory (must be outside formal roots, inputs, and the bundle)",
     )
-    snapshot_verify.add_argument(
+    verify_evidence = snapshot_verify.add_mutually_exclusive_group()
+    verify_evidence.add_argument(
         "--issue-evidence", type=Path, default=None,
         help="optional M12 snapshot_status.json (m12-engine-snapshot-status-v1)",
     )
+    verify_evidence.add_argument(
+        "--bundle-manifest", type=Path, default=None,
+        help="explicit runtime bundle_manifest.json (B04 bundle mode; mutually exclusive with --issue-evidence)",
+    )
+    bundle_build = subparsers.add_parser(
+        "runtime-bundle-build",
+        help="build one portable single-model runtime bundle from a fresh-at-issue M12 record",
+    )
+    bundle_build.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit single-model M11 snapshot_manifest.json (read-only input)")
+    bundle_build.add_argument(
+        "--issue-audit", type=Path, required=True,
+        help="explicit original M12 snapshot_status.json (m12-engine-snapshot-status-v1), fresh at issue",
+    )
+    bundle_build.add_argument(
+        "--output-root", type=Path, required=True,
+        help="root for the new unique build job directory (must be outside formal roots, inputs, and source code)",
+    )
+    bundle_verify = subparsers.add_parser(
+        "runtime-bundle-verify",
+        help="read-only verification of one runtime bundle against its own manifest",
+    )
+    bundle_verify.add_argument("--bundle-manifest", type=Path, required=True, help="explicit runtime bundle_manifest.json")
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
         "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
@@ -638,6 +671,7 @@ def _snapshot_session(args: argparse.Namespace) -> int:
             mode=args.mode,
             output_root=args.output_root,
             issue_evidence_path=args.issue_evidence,
+            bundle_manifest_path=args.bundle_manifest,
         )
     except _SNAPSHOT_EXPECTED_ERRORS as exc:
         print(f"MatchQuant snapshot-session blocked: {exc}", file=sys.stderr)
@@ -661,6 +695,7 @@ def _snapshot_run_verify(args: argparse.Namespace) -> int:
             args.forecast_run,
             output_root=args.output_root,
             issue_evidence_path=args.issue_evidence,
+            bundle_manifest_path=args.bundle_manifest,
         )
     except _SNAPSHOT_EXPECTED_ERRORS as exc:
         print(f"MatchQuant snapshot-run-verify blocked: {exc}", file=sys.stderr)
@@ -674,6 +709,45 @@ def _snapshot_run_verify(args: argparse.Namespace) -> int:
     print(f"prediction_audit={result['prediction_audit_path']}")
     print(f"audit_report={result['prediction_audit_report_path']}")
     return _SNAPSHOT_STATUS_EXIT[result["status"]]
+
+
+def _runtime_bundle_build(args: argparse.Namespace) -> int:
+    try:
+        result = build_runtime_bundle(
+            args.snapshot_manifest,
+            args.issue_audit,
+            output_root=args.output_root,
+        )
+    except _SNAPSHOT_EXPECTED_ERRORS as exc:
+        print(f"MatchQuant runtime-bundle-build blocked: {exc}", file=sys.stderr)
+        return 1
+    print(f"MatchQuant runtime bundle build {result['status']}")
+    if result["reasons"]:
+        print(f"reasons={'; '.join(result['reasons'])}")
+    print(f"snapshot_id={result['snapshot_id']}")
+    print(f"build_dir={result['build_dir']}")
+    print(f"bundle_dir={result['bundle_dir']}")
+    if result["bundle_manifest_sha256"]:
+        print(f"bundle_manifest={result['bundle_manifest_path']}")
+        print(f"bundle_manifest_sha256={result['bundle_manifest_sha256']}")
+    print(f"files={result['file_count']} payload_bytes={result['payload_bytes']} total_bytes={result['total_bytes']} limit_bytes={result['limit_bytes']}")
+    return 0 if result["status"] == "ready" else 1
+
+
+def _runtime_bundle_verify(args: argparse.Namespace) -> int:
+    try:
+        result = verify_runtime_bundle(args.bundle_manifest)
+    except _SNAPSHOT_EXPECTED_ERRORS as exc:
+        print(f"MatchQuant runtime-bundle-verify blocked: {exc}", file=sys.stderr)
+        return 1
+    print(f"MatchQuant runtime bundle verify {result['status']}")
+    if result["reasons"]:
+        print(f"reasons={'; '.join(result['reasons'])}")
+    if result["snapshot_id"]:
+        print(f"snapshot_id={result['snapshot_id']}")
+    print(f"bundle_root={result['bundle_root']}")
+    print(f"files={result['file_count']} total_bytes={result['total_bytes']}")
+    return 0 if result["status"] == "ready" else 1
 
 
 def _epl_download(args: argparse.Namespace) -> int:
@@ -859,6 +933,11 @@ def _postmatch_session(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "snapshot-session" and args.bundle_manifest is not None and args.issue_evidence is not None:
+        parser.error(
+            "--issue-evidence cannot be combined with --bundle-manifest; bundle sessions read "
+            "the bundled issue record itself"
+        )
     try:
         if args.command == "run":
             raise SystemExit(_run(args))
@@ -876,6 +955,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_snapshot_session(args))
         if args.command == "snapshot-run-verify":
             raise SystemExit(_snapshot_run_verify(args))
+        if args.command == "runtime-bundle-build":
+            raise SystemExit(_runtime_bundle_build(args))
+        if args.command == "runtime-bundle-verify":
+            raise SystemExit(_runtime_bundle_verify(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

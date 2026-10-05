@@ -71,6 +71,25 @@ def write_snapshot_audit_report(path: Path, audit: Mapping[str, Any]) -> Path:
         lines.append(f"- 记录状态：`{_markdown_text(str(issue.get('record_status')))}`")
         lines.append(f"- fresh_at_issue：{issue.get('fresh_at_issue')}")
         lines.append(f"- active_link_status：`{_markdown_text(str(issue.get('active_link_status')))}`")
+        if issue.get("validation_kind"):
+            lines.append(
+                f"- 验证桥：`{_markdown_text(str(issue.get('validation_kind')))}"
+                "（原 M12 记录绑定原 manifest hash，经包内派生 manifest lineage 关联）`"
+            )
+    bundle = audit.get("bundle")
+    if isinstance(bundle, Mapping):
+        lines.extend(["", "## 运行包 lineage", ""])
+        lines.append(f"- bundle manifest：`{_markdown_text(str(bundle.get('bundle_manifest_path')))}`")
+        lines.append(
+            f"- validation_kind：`{_markdown_text(str(bundle.get('validation_kind')))}`"
+        )
+        lines.append(
+            f"- original manifest file hash：`{_markdown_text(str(bundle.get('original', {}).get('manifest_file_sha256')))}`"
+        )
+        lines.append(
+            f"- derived manifest file hash：`{_markdown_text(str((bundle.get('derived') or {}).get('file_sha256')))}`"
+        )
+        lines.append(f"- state SHA-256（原/派生一致）：`{_markdown_text(str(bundle.get('state_file_sha256')))}`")
     checks = audit.get("engine_checks")
     if isinstance(checks, list) and checks:
         lines.extend(["", "## 工程检查", "", "| 检查 | 状态 | 说明 |", "|---|---|---|"])
@@ -140,6 +159,37 @@ def write_snapshot_session_report(path: Path, manifest: Mapping[str, Any]) -> Pa
         if audit_reasons:
             lines.extend(["", "子审计理由：", ""])
             lines.extend(f"- `{_markdown_text(str(reason))}`" for reason in audit_reasons)
+    bundle = manifest.get("bundle")
+    if isinstance(bundle, Mapping):
+        lines.extend(["", "## 运行包（bundle 模式）", ""])
+        lines.append(f"- bundle manifest：`{_markdown_text(str(bundle.get('bundle_manifest_path')))}`")
+        lines.append(f"- snapshot_id：`{_markdown_text(str(bundle.get('snapshot_id')))}`")
+        lines.append(
+            f"- 验证桥：`{_markdown_text(str(bundle.get('validation_kind')))}`"
+        )
+        lines.append(f"- fresh_at_issue：{bundle.get('fresh_at_issue')}")
+        lines.append(f"- active_link_status：`{_markdown_text(str(bundle.get('active_link_status')))}`")
+    team_index = manifest.get("team_index")
+    team_annotations = manifest.get("team_annotations")
+    if isinstance(team_index, Mapping) or isinstance(team_annotations, Mapping):
+        lines.extend(["", "## 球队索引与未知球队标注", ""])
+    if isinstance(team_index, Mapping):
+        lines.append(f"- 模型：`{_markdown_text(str(team_index.get('model')))}`")
+        lines.append(f"- team_membership：`{_markdown_text(str(team_index.get('team_membership')))}`")
+        lines.append(f"- 球队数：{team_index.get('teams_count')}")
+        if team_index.get("frequency_basis"):
+            lines.append("- frequency_basis：`global`（frequency 模型没有球队学习状态，全部输入使用全局频率）")
+    if isinstance(team_annotations, Mapping):
+        unseen_home = team_annotations.get("unseen_home_teams")
+        unseen_away = team_annotations.get("unseen_away_teams")
+        if unseen_home is not None:
+            lines.append(f"- unseen 主队：{', '.join(unseen_home) if unseen_home else '无'}")
+            lines.append(f"- unseen 客队：{', '.join(unseen_away) if unseen_away else '无'}")
+        prior = team_annotations.get("unseen_team_prior")
+        if isinstance(prior, Mapping):
+            lines.append(f"- unseen 球队先验：`{_markdown_text(str(dict(prior)))}`")
+        if team_annotations.get("note"):
+            lines.append(f"- {_markdown_text(str(team_annotations.get('note')))}")
     coverage = manifest.get("coverage")
     if isinstance(coverage, Mapping):
         lines.extend(["", "## 覆盖状态", ""])

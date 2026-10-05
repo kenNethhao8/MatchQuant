@@ -5,6 +5,12 @@ explicit score-free fixture CSV, calls the existing M11 predictor into a fresh
 session directory, audits the produced run through the shared read-only audit,
 and writes a session manifest plus a Chinese report. It never settles, never
 runs M12, never reads history or pointer files, and never touches the network.
+
+B04 bundle mode: ``bundle_manifest_path`` is mutually exclusive with a bare
+snapshot manifest and with ``issue_evidence_path``. The bundle is re-verified
+from its own bytes first, prediction runs from the bundle's derived snapshot,
+the embedded audit binds the run through the derived-manifest lineage bridge,
+and every bundle payload file must hash unchanged across the session.
 """
 
 from __future__ import annotations
@@ -16,6 +22,11 @@ from .engine_snapshot import predict_from_engine_snapshot
 from .engine_snapshot_manifest import load_engine_snapshot
 from .fixtures import FIXTURE_SCHEMA_VERSION, load_fixtures
 from .io import file_sha256, write_json
+from .runtime_bundle_validation import (
+    BUNDLE_LINEAGE_VALIDATION_KIND,
+    check_bundle_payload_integrity,
+    verify_runtime_bundle,
+)
 from .schema import DataValidationError
 from .snapshot_audit_support import (
     ACTIVE_LINK_STATUS,
@@ -88,19 +99,97 @@ def _write_blocked_audit_files(
     return audit
 
 
+def _team_annotations(
+    bundle_verification: dict[str, Any], fixtures: Any
+) -> dict[str, Any]:
+    """Display-only unseen-team annotations for one bundle session.
+
+    The annotations never modify M11 prediction columns, the run schema, the
+    model config, or the probabilities. For frequency the empty team index is
+    never used to call any input team unseen: the global-frequency basis is
+    declared instead.
+    """
+
+    index = bundle_verification["team_index"]["payload"]
+    model = str(index["model"])
+    if index["team_membership"] == "not_applicable":
+        return {
+            "frequency_basis": "global",
+            "team_membership": "not_applicable",
+            "unseen_home_teams": None,
+            "unseen_away_teams": None,
+            "unseen_team_prior": None,
+            "note": (
+                "frequency 模型没有球队学习状态：全部输入使用全局频率；"
+                "不把输入球队称为新队，也不维护球队清单。"
+            ),
+        }
+    known = set(index["teams"])
+    unseen_home = sorted({str(value) for value in fixtures["home_team"]} - known)
+    unseen_away = sorted({str(value) for value in fixtures["away_team"]} - known)
+    config = bundle_verification["model"]["config"]
+    if model == "elo":
+        prior: dict[str, Any] = {
+            "mechanism": "unseen teams use the model initial_rating prior",
+            "initial_rating": config.get("initial_rating", 1500.0),
+        }
+    else:
+        prior = {
+            "mechanism": "unseen teams fall back to the shrunk global goal rates",
+            "prior_home_goals": config.get("prior_home_goals"),
+            "prior_away_goals": config.get("prior_away_goals"),
+            "prior_weight": config.get("prior_weight"),
+        }
+    return {
+        "frequency_basis": None,
+        "team_membership": "learned_from_state",
+        "unseen_home_teams": unseen_home,
+        "unseen_away_teams": unseen_away,
+        "unseen_team_prior": prior,
+        "note": (
+            "unseen 标注是独立会话注释：不修改 M11 预测列、run schema、模型配置或概率；"
+            "已知球队也不证明其仍参加当前赛季。"
+        ),
+    }
+
+
 def run_snapshot_session(
-    snapshot_manifest_path: str | Path,
+    snapshot_manifest_path: str | Path | None,
     fixtures_path: str | Path,
     *,
     mode: str = "replay",
     output_root: str | Path,
     issue_evidence_path: str | Path | None = None,
+    bundle_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Run one offline snapshot prediction session and return its structured result."""
+    """Run one offline snapshot prediction session and return its structured result.
+
+    Exactly one of ``snapshot_manifest_path`` (bare B03 mode) or
+    ``bundle_manifest_path`` (B04 bundle mode) must be provided; bundle mode
+    cannot override the issue evidence because the original M12 record is read
+    from the verified bundle itself.
+    """
 
     if mode not in {"replay", "research"}:
         raise ValueError("mode must be 'replay' or 'research'")
-    snapshot_file = Path(snapshot_manifest_path).expanduser().resolve()
+    if bundle_manifest_path is not None:
+        if snapshot_manifest_path is not None:
+            raise ValueError(
+                "bare snapshot and bundle modes are mutually exclusive; provide exactly one of "
+                "snapshot_manifest_path or bundle_manifest_path"
+            )
+        if issue_evidence_path is not None:
+            raise ValueError(
+                "bundle sessions read the issue evidence inside the verified bundle; "
+                "issue_evidence_path must be None"
+            )
+    elif snapshot_manifest_path is None:
+        raise ValueError(
+            "provide exactly one of snapshot_manifest_path or bundle_manifest_path"
+        )
+    bundle_file = (
+        Path(bundle_manifest_path).expanduser().resolve() if bundle_manifest_path is not None else None
+    )
     fixtures_file = Path(fixtures_path).expanduser().resolve()
     issue_file = (
         Path(issue_evidence_path).expanduser().resolve() if issue_evidence_path is not None else None
@@ -108,7 +197,12 @@ def run_snapshot_session(
     output_root_path = ensure_safe_output_root(
         output_root,
         [
-            (snapshot_file, "file"),
+            *([(bundle_file.parent, "dir")] if bundle_file is not None else []),
+            *(
+                [(Path(snapshot_manifest_path).expanduser().resolve(), "file")]
+                if snapshot_manifest_path is not None
+                else []
+            ),
             (fixtures_file, "file"),
             *([(issue_file, "file")] if issue_file is not None else []),
         ],
@@ -129,6 +223,7 @@ def run_snapshot_session(
         "status": "blocked",
         "reasons": [],
         "stages": {
+            "bundle_verify": "not_run" if bundle_file is not None else None,
             "snapshot_load": "not_run",
             "fixtures_load": "not_run",
             "prediction": "not_run",
@@ -136,7 +231,14 @@ def run_snapshot_session(
             "finalize": "not_run",
         },
         "inputs": {
-            "snapshot_manifest": {"path": str(snapshot_file), "sha256": None},
+            "snapshot_manifest": (
+                {"path": str(Path(snapshot_manifest_path).expanduser().resolve()), "sha256": None}
+                if snapshot_manifest_path is not None
+                else None
+            ),
+            "bundle_manifest": (
+                {"path": str(bundle_file), "sha256": None} if bundle_file is not None else None
+            ),
             "fixtures": {"path": str(fixtures_file), "sha256": None, "rows": None},
             "issue_evidence": {
                 "provided": issue_file is not None,
@@ -145,6 +247,9 @@ def run_snapshot_session(
             },
         },
         "snapshot": None,
+        "bundle": None,
+        "team_index": None,
+        "team_annotations": None,
         "prediction_run": None,
         "audit": None,
         "coverage": None,
@@ -164,6 +269,8 @@ def run_snapshot_session(
             "prediction_run_dir": None,
         },
     }
+    if bundle_file is None:
+        del manifest["stages"]["bundle_verify"]
 
     def persist() -> None:
         write_json(manifest, manifest_path)
@@ -219,6 +326,9 @@ def run_snapshot_session(
                 if isinstance(manifest["prediction_run"], dict)
                 else None
             ),
+            "bundle": manifest["bundle"],
+            "team_index": manifest["team_index"],
+            "team_annotations": manifest["team_annotations"],
             "prediction_audit_path": manifest["outputs"]["prediction_audit_json"],
             "prediction_audit_sha256": manifest["output_hashes"]["prediction_audit_json"],
             "prediction_audit_report_path": manifest["outputs"]["prediction_audit_md"],
@@ -256,6 +366,46 @@ def run_snapshot_session(
         persist()
         return finish()
 
+    # Stage: bundle_verify (bundle mode only; the whole package is re-verified from its own bytes)
+    snapshot_file = Path(snapshot_manifest_path).expanduser().resolve() if snapshot_manifest_path is not None else None
+    bundle_verification: dict[str, Any] | None = None
+    if bundle_file is not None:
+        try:
+            bundle_verification = verify_runtime_bundle(bundle_file)
+            if bundle_verification["status"] != "ready":
+                raise DataValidationError(
+                    "bundle verification failed: " + "; ".join(bundle_verification["reasons"])
+                )
+            derived_path = Path(bundle_verification["derived"]["resolved_manifest_path"])
+            if not derived_path.is_file():
+                raise FileNotFoundError(f"derived snapshot manifest does not exist: {derived_path}")
+        except EXPECTED_STAGE_ERRORS as exc:
+            return block("bundle_verify", exc)
+        manifest["stages"]["bundle_verify"] = "completed"
+        manifest["inputs"]["bundle_manifest"]["sha256"] = bundle_verification["bundle_manifest_file_sha256"]
+        manifest["bundle"] = {
+            "bundle_manifest_path": bundle_verification["bundle_manifest_path"],
+            "bundle_manifest_file_sha256": bundle_verification["bundle_manifest_file_sha256"],
+            "bundle_root": bundle_verification["bundle_root"],
+            "snapshot_id": bundle_verification["snapshot_id"],
+            "validation_kind": BUNDLE_LINEAGE_VALIDATION_KIND,
+            "original_manifest_file_sha256": bundle_verification["original"]["manifest_file_sha256"],
+            "derived_manifest_file_sha256": bundle_verification["derived"]["file_sha256"],
+            "state_file_sha256": bundle_verification["derived"]["state_sha256"],
+            "fresh_at_issue": bundle_verification["issue_validation"]["fresh_at_issue"],
+            "active_link_status": bundle_verification["issue_validation"]["active_link_status"],
+        }
+        manifest["team_index"] = {
+            "path": bundle_verification["team_index"]["path"],
+            "file_sha256": bundle_verification["team_index"]["file_sha256"],
+            "model": bundle_verification["team_index"]["payload"]["model"],
+            "team_membership": bundle_verification["team_index"]["payload"]["team_membership"],
+            "frequency_basis": bundle_verification["team_index"]["payload"]["frequency_basis"],
+            "teams_count": len(bundle_verification["team_index"]["payload"]["teams"]),
+        }
+        snapshot_file = Path(bundle_verification["derived"]["resolved_manifest_path"])
+    persist()
+
     # Stage: snapshot_load (expected input failures are recorded as structured blocked artifacts)
     try:
         if not snapshot_file.is_file():
@@ -269,7 +419,8 @@ def run_snapshot_session(
             )
         model_evidence = loaded_manifest["models"][0]
         manifest["stages"]["snapshot_load"] = "completed"
-        manifest["inputs"]["snapshot_manifest"]["sha256"] = loaded["manifest_sha256"]
+        if snapshot_manifest_path is not None:
+            manifest["inputs"]["snapshot_manifest"]["sha256"] = loaded["manifest_sha256"]
         manifest["snapshot"] = {
             "snapshot_id": loaded_manifest["snapshot_id"],
             "manifest_path": str(snapshot_file),
@@ -305,6 +456,10 @@ def run_snapshot_session(
     except EXPECTED_STAGE_ERRORS as exc:
         return block("fixtures_load", exc)
     persist()
+
+    # Bundle mode: display-only unseen-team annotations derived from the verified team index
+    if bundle_verification is not None:
+        manifest["team_annotations"] = _team_annotations(bundle_verification, fixtures)
 
     # Stage: prediction (existing M11 predictor into the session directory)
     try:
@@ -342,6 +497,7 @@ def run_snapshot_session(
             audited_at=audited_at,
             output_dir=session_dir,
             audit_command="matchquant snapshot-session",
+            bundle_context=bundle_verification,
         )
     except EXPECTED_STAGE_ERRORS as exc:
         return block("audit", exc)
@@ -362,20 +518,30 @@ def run_snapshot_session(
     persist()
 
     # Stage: finalize (input immutability re-check and status derivation)
-    unchanged_records: list[tuple[str, Path, str]] = [
-        ("snapshot_manifest", snapshot_file, manifest["inputs"]["snapshot_manifest"]["sha256"]),
-        ("fixtures", fixtures_file, manifest["inputs"]["fixtures"]["sha256"]),
-        (
-            "run_config",
-            run_dir / "run_config.json",
-            manifest["prediction_run"]["run_config"]["sha256"],
-        ),
-        (
-            "predictions",
-            run_dir / "predictions.csv",
-            manifest["prediction_run"]["predictions"]["sha256"],
-        ),
-    ]
+    unchanged_records: list[tuple[str, Path, str]] = []
+    if bundle_verification is None:
+        unchanged_records.append(
+            ("snapshot_manifest", snapshot_file, manifest["inputs"]["snapshot_manifest"]["sha256"])
+        )
+    else:
+        unchanged_records.append(
+            ("bundle_manifest", bundle_file, manifest["inputs"]["bundle_manifest"]["sha256"])
+        )
+    unchanged_records.extend(
+        [
+            ("fixtures", fixtures_file, manifest["inputs"]["fixtures"]["sha256"]),
+            (
+                "run_config",
+                run_dir / "run_config.json",
+                manifest["prediction_run"]["run_config"]["sha256"],
+            ),
+            (
+                "predictions",
+                run_dir / "predictions.csv",
+                manifest["prediction_run"]["predictions"]["sha256"],
+            ),
+        ]
+    )
     if issue_file is not None and issue_block is not None:
         unchanged_records.append(("issue_evidence", issue_file, str(issue_block["sha256"])))
     inputs_unchanged = True
@@ -389,6 +555,18 @@ def run_snapshot_session(
         manifest["reasons"].append(f"input_verification_failed: {exc}")
         inputs_unchanged = False
     manifest["inputs_unchanged"] = inputs_unchanged
+
+    bundle_unchanged: bool | None = None
+    if bundle_verification is not None and inputs_unchanged:
+        bundle_ok, bundle_errors, _recorded = check_bundle_payload_integrity(
+            Path(bundle_verification["bundle_root"]), bundle_verification["files"]
+        )
+        bundle_unchanged = bundle_ok
+        if not bundle_ok:
+            manifest["reasons"].append(
+                "bundle_files_changed_during_session: " + "; ".join(bundle_errors)
+            )
+            inputs_unchanged = False
 
     audit_blocked = audit["status"] == "blocked" or any(
         stage == "failed" for stage in audit["stages"].values()
