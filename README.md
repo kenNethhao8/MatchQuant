@@ -454,6 +454,32 @@ python -m matchquant engine-snapshot-status `
 
 每次调用都会在显式 output root 下创建唯一的 `m12_engine_snapshot_status_<UTC>_<ID>`，保存 `snapshot_status.json` 和简洁的 `snapshot_status.md`。`fresh` 只在两类证据完整且路径、hash、dataset version 精确匹配时返回；有效但关联到不同历史版本的快照返回 `stale`；缺失、篡改或结构不完整的 snapshot/pointer 返回 `unverifiable` 并保留失败证据。`stale` 不会使旧快照失效：旧快照仍可由 `engine-snapshot-predict` 独立复现。若要重建，用户必须主动再次执行显式的 M11 `engine-snapshot-build`。
 
+## 快照会话与只读审计（B03）
+
+B03 在 M11 之上新增两个公开 API（`matchquant.run_snapshot_session`、`matchquant.verify_snapshot_run`）和两条只读 CLI，把"单模型 M11 快照 → 预测 → 只读审计"串成一个离线会话。两者都只接受单模型 M11 输入，复用既有严格 snapshot loader、M11 predict 与 B02 预测证据适配层；不读取 history CSV、历史 processed manifest 或 current pointer，不联网、不结算、不运行 M12、不 apply、不重建快照。
+
+```powershell
+python -m matchquant snapshot-session `
+  --snapshot-manifest <M11 snapshot_manifest.json> `
+  --fixtures <score-free fixture CSV> `
+  --mode replay `
+  --output-root <会话输出根（必填）> `
+  [--issue-evidence <M12 snapshot_status.json>]
+
+python -m matchquant snapshot-run-verify `
+  --forecast-run <已有单模型 M11 prediction run 目录> `
+  --output-root <审计输出根（必填）> `
+  [--issue-evidence <M12 snapshot_status.json>]
+```
+
+`snapshot-session` 在 `--output-root` 下创建唯一 `baseline_snapshot_session_<UTC>_<ID>` 目录，内含 `session_manifest.json`、中文 `session_report.md`、`prediction_audit.json`、`prediction_audit.md` 以及会话自己生成的原样 M11 prediction run 子目录。`--mode replay` 是可复现的历史回溯研究（报告明确 retrospective）；`--mode research` 表示本地待赛研究，即使工程通过且附带 fresh 发行证据，也因目标时点赛果覆盖未证明而保持 `needs_review`（理由 `coverage_to_fixture_time_not_proven`），不得当作当前可用预测产品。`snapshot-run-verify` 在 `--output-root` 下创建唯一 `baseline_snapshot_audit_<UTC>_<ID>`，输出新的审计 JSON/中文报告。
+
+审计实际完成的工程检查包括：经 B02 严格证据适配层核验的快照 manifest/state hash、单模型集合一致、run/predictions/fixtures hash、as_of 三字段绑定与 used cutoff 时序门槛、fixture 与预测逐行身份对应、概率有限/范围/求和；随后用原快照与原 score-free fixtures 在隔离临时目录重新调用既有 M11 predict，与原预测逐行比较概率与身份（`atol=1e-12, rtol=0`）——只改预测值并同步更新记录 hash 仍会被该计算一致性检查拒绝；最后复核全部输入 hash 前后不变。原 run 不覆盖，重算文件不是原 run 的新版本。
+
+可选 `--issue-evidence` 只接受现有 M12 输出 `snapshot_status.json`（schema `m12-engine-snapshot-status-v1`）。审计计算其文件 SHA-256，校验结构、字段类型、UTC `generated_at`（不得晚于本次审计时间）、目标快照绑定与记录内部一致性；手写 `status=fresh` 而比较标志/理由/pointer 记录矛盾的记录会被拒绝。通过绑定验证的 fresh 记录显示 `fresh_at_issue=true`，它只表示发行时点的历史关联验证，不证明当前 active、今天最新或训练到目标比赛；`active_link_status` 固定为 `not_checked_in_runtime`。stale/unverifiable 记录只能作为历史限制展示，不能升格为 fresh；证据中记录的研究端路径只做规范化比较，不会被打开，断开这些文件后运行端仍可完成审计。此版本没有签名或外部可信 hash，实际文件 hash 只证明本次输入一致性，不构成发行来源认证。
+
+状态与退出码（正常解析后与 JSON 状态一致）：`ready` 退出 0（replay 工程通过，或 standalone 审计工程通过且已关联的历史发行记录 fresh）；`needs_review` 退出 2（standalone 审计工程通过但发行证据缺失/stale/unverifiable，或 research 工程通过但覆盖未证明）；`blocked` 退出 1（任一工程校验失败、输入/IO 错误或已提供证据损坏；此时保留结构化失败产物，`predictions_usable=false`）。replay 会话可在自身 `ready` 的同时保留 `needs_review` 的子审计状态与理由，两者同时显示，子审计不会被升格。输出根不得位于输入文件/目录内、既有 session/audit 或 M11 证据目录内，也不得写正式 `D:\Codex\matchquant_data` / `D:\Codex\matchquant_runs`；此类拒绝在创建任何文件前发生，stderr 说明原因且不会有失败报告。注意区分：缺参数等 argparse 使用错误仍是既有 usage/退出 2，它不代表产生了 needs_review 审计。结算继续使用既有 `settle` 命令，传入会话引用的实际 M11 run 目录与独立赛果文件，不要把会话目录冒充 prediction run。
+
 ## 三个模型
 
 - `frequency`：带 Laplace 风格 `alpha` 平滑的历史 H/D/A 频率基线。

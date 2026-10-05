@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ from .schema import DataValidationError
 from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
 from .settlement import settle_forecast_run
 from .release_verify import verify_release
+from .snapshot_run_verify import verify_snapshot_run
+from .snapshot_session import run_snapshot_session
 
 DEFAULT_M3_CANDIDATE_CONFIG = Path(__file__).resolve().parent.parent / "examples" / "m3_candidates.json"
 
@@ -123,6 +126,34 @@ def _parser() -> argparse.ArgumentParser:
     snapshot_status.add_argument(
         "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
         help="root for a new timestamped M12 status audit directory",
+    )
+    snapshot_session = subparsers.add_parser(
+        "snapshot-session",
+        help="run one offline single-model M11 snapshot prediction session with a read-only audit",
+    )
+    snapshot_session.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
+    snapshot_session.add_argument("--fixtures", type=Path, required=True, help="explicit score-free fixture CSV")
+    snapshot_session.add_argument("--mode", choices=["replay", "research"], default="replay", help="replay (retrospective) or research (pending coverage review)")
+    snapshot_session.add_argument(
+        "--output-root", type=Path, required=True,
+        help="root for the new unique session directory (must be outside formal roots and inputs)",
+    )
+    snapshot_session.add_argument(
+        "--issue-evidence", type=Path, default=None,
+        help="optional M12 snapshot_status.json (m12-engine-snapshot-status-v1)",
+    )
+    snapshot_verify = subparsers.add_parser(
+        "snapshot-run-verify",
+        help="read-only audit of one existing single-model M11 snapshot prediction run",
+    )
+    snapshot_verify.add_argument("--forecast-run", type=Path, required=True, help="completed single-model M11 snapshot prediction run directory")
+    snapshot_verify.add_argument(
+        "--output-root", type=Path, required=True,
+        help="root for the new unique audit directory (must be outside formal roots and inputs)",
+    )
+    snapshot_verify.add_argument(
+        "--issue-evidence", type=Path, default=None,
+        help="optional M12 snapshot_status.json (m12-engine-snapshot-status-v1)",
     )
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
@@ -561,6 +592,55 @@ def _engine_snapshot_status(args: argparse.Namespace) -> int:
     return 0 if result["status"] in {"fresh", "stale"} else 2
 
 
+_SNAPSHOT_STATUS_EXIT = {"ready": 0, "needs_review": 2, "blocked": 1}
+_SNAPSHOT_EXPECTED_ERRORS = (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError)
+
+
+def _snapshot_session(args: argparse.Namespace) -> int:
+    try:
+        result = run_snapshot_session(
+            args.snapshot_manifest,
+            args.fixtures,
+            mode=args.mode,
+            output_root=args.output_root,
+            issue_evidence_path=args.issue_evidence,
+        )
+    except _SNAPSHOT_EXPECTED_ERRORS as exc:
+        print(f"MatchQuant snapshot-session blocked: {exc}", file=sys.stderr)
+        print("blocked: the output was refused or unwritable; no session artifacts were saved", file=sys.stderr)
+        return 1
+    print(f"MatchQuant snapshot session {result['status']}")
+    print(f"mode={result['mode']} audit_status={result['audit_status']}")
+    if result["reasons"]:
+        print(f"reasons={','.join(result['reasons'])}")
+    print(f"session_dir={result['session_dir']}")
+    print(f"prediction_run={result['prediction_run_dir']}")
+    print(f"session_manifest={result['session_manifest_path']}")
+    print(f"session_report={result['session_report_path']}")
+    return _SNAPSHOT_STATUS_EXIT[result["status"]]
+
+
+def _snapshot_run_verify(args: argparse.Namespace) -> int:
+    try:
+        result = verify_snapshot_run(
+            args.forecast_run,
+            output_root=args.output_root,
+            issue_evidence_path=args.issue_evidence,
+        )
+    except _SNAPSHOT_EXPECTED_ERRORS as exc:
+        print(f"MatchQuant snapshot-run-verify blocked: {exc}", file=sys.stderr)
+        print("blocked: the output was refused or unwritable; no audit artifacts were saved", file=sys.stderr)
+        return 1
+    print(f"MatchQuant snapshot run audit {result['status']}")
+    if result["reasons"]:
+        print(f"reasons={','.join(result['reasons'])}")
+    print(f"forecast_run={result['run_dir']}")
+    print(f"audit_dir={result['audit_dir']}")
+    print(f"prediction_audit={result['prediction_audit_path']}")
+    print(f"audit_report={result['prediction_audit_report_path']}")
+    return _SNAPSHOT_STATUS_EXIT[result["status"]]
+
+
 def _epl_download(args: argparse.Namespace) -> int:
     manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
     print("MatchQuant M2 EPL download complete")
@@ -757,6 +837,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_engine_snapshot_predict(args))
         if args.command == "engine-snapshot-status":
             raise SystemExit(_engine_snapshot_status(args))
+        if args.command == "snapshot-session":
+            raise SystemExit(_snapshot_session(args))
+        if args.command == "snapshot-run-verify":
+            raise SystemExit(_snapshot_run_verify(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

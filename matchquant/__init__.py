@@ -89,6 +89,13 @@ from .release_verify import (
     release_verify,
     verify_release,
 )
+from .snapshot_audit_support import (
+    ACTIVE_LINK_STATUS as SNAPSHOT_ACTIVE_LINK_STATUS,
+    AUDIT_SCHEMA_VERSION as SNAPSHOT_RUN_AUDIT_SCHEMA_VERSION,
+    SESSION_SCHEMA_VERSION as SNAPSHOT_SESSION_SCHEMA_VERSION,
+)
+from .snapshot_run_verify import verify_snapshot_run
+from .snapshot_session import run_snapshot_session
 
 __all__ = [
     "DataValidationError",
@@ -123,6 +130,9 @@ __all__ = [
     "SETTLEMENT_SCHEMA_VERSION",
     "RELEASE_STATUSES",
     "RELEASE_VERIFY_SCHEMA_VERSION",
+    "SNAPSHOT_ACTIVE_LINK_STATUS",
+    "SNAPSHOT_RUN_AUDIT_SCHEMA_VERSION",
+    "SNAPSHOT_SESSION_SCHEMA_VERSION",
     "create_model",
     "build_engine_snapshot",
     "check_engine_snapshot_status",
@@ -153,6 +163,8 @@ __all__ = [
     "reliability_table",
     "run_models",
     "run_forecast",
+    "run_snapshot_session",
+    "verify_snapshot_run",
     "predict_from_engine_snapshot",
     "new_forecast_session_dir",
     "run_forecast_session",
