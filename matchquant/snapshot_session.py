@@ -105,12 +105,6 @@ def run_snapshot_session(
     issue_file = (
         Path(issue_evidence_path).expanduser().resolve() if issue_evidence_path is not None else None
     )
-    if not snapshot_file.is_file():
-        raise FileNotFoundError(f"snapshot manifest does not exist: {snapshot_file}")
-    if not fixtures_file.is_file():
-        raise FileNotFoundError(f"fixtures CSV does not exist: {fixtures_file}")
-    if issue_file is not None and not issue_file.is_file():
-        raise FileNotFoundError(f"issue evidence JSON does not exist: {issue_file}")
     output_root_path = ensure_safe_output_root(
         output_root,
         [snapshot_file, fixtures_file, *([issue_file] if issue_file is not None else [])],
@@ -171,12 +165,26 @@ def run_snapshot_session(
         write_json(manifest, manifest_path)
 
     def finish() -> dict[str, Any]:
-        write_snapshot_session_report(report_path, manifest)
-        manifest["output_hashes"] = {
-            "prediction_audit_json": file_sha256(session_dir / "prediction_audit.json"),
-            "prediction_audit_md": file_sha256(session_dir / "prediction_audit.md"),
-            "session_report": file_sha256(report_path),
-        }
+        output_errors: list[str] = []
+        try:
+            write_snapshot_session_report(report_path, manifest)
+        except OSError as exc:
+            output_errors.append(f"session_report: {exc}")
+        manifest["output_hashes"] = {}
+        for key, artifact_path in (
+            ("prediction_audit_json", session_dir / "prediction_audit.json"),
+            ("prediction_audit_md", session_dir / "prediction_audit.md"),
+            ("session_report", report_path),
+        ):
+            try:
+                manifest["output_hashes"][key] = (
+                    file_sha256(artifact_path) if artifact_path.is_file() else None
+                )
+            except OSError as exc:
+                manifest["output_hashes"][key] = None
+                output_errors.append(f"{key}: {exc}")
+        if output_errors:
+            manifest["output_write_errors"] = output_errors
         write_json(manifest, manifest_path)
         return {
             "status": manifest["status"],
@@ -203,6 +211,7 @@ def run_snapshot_session(
                 manifest["audit"]["reasons"] if isinstance(manifest["audit"], dict) else []
             ),
             "predictions_usable": manifest["predictions_usable"],
+            "output_write_errors": list(manifest.get("output_write_errors", [])),
             "manifest": manifest,
         }
 
@@ -229,8 +238,10 @@ def run_snapshot_session(
         persist()
         return finish()
 
-    # Stage: snapshot_load
+    # Stage: snapshot_load (expected input failures are recorded as structured blocked artifacts)
     try:
+        if not snapshot_file.is_file():
+            raise FileNotFoundError(f"snapshot manifest does not exist: {snapshot_file}")
         loaded = load_engine_snapshot(snapshot_file)
         loaded_manifest = loaded["manifest"]
         if len(loaded_manifest["model_names"]) != 1:
@@ -266,6 +277,8 @@ def run_snapshot_session(
 
     # Stage: fixtures_load
     try:
+        if not fixtures_file.is_file():
+            raise FileNotFoundError(f"fixtures CSV does not exist: {fixtures_file}")
         fixtures = load_fixtures(fixtures_file)
         manifest["stages"]["fixtures_load"] = "completed"
         manifest["inputs"]["fixtures"]["sha256"] = file_sha256(fixtures_file)

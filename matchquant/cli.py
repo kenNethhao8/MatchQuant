@@ -596,6 +596,40 @@ _SNAPSHOT_STATUS_EXIT = {"ready": 0, "needs_review": 2, "blocked": 1}
 _SNAPSHOT_EXPECTED_ERRORS = (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError)
 
 
+def _artifact_note(output_root: Path, kind: str) -> str:
+    """Honest stderr note: report what actually exists instead of claiming nothing was saved."""
+
+    from .snapshot_audit_support import AUDIT_DIR_PREFIX, SESSION_DIR_PREFIX
+
+    try:
+        root = Path(output_root).expanduser().resolve()
+        existing = (
+            sorted(
+                entry.name
+                for entry in root.iterdir()
+                if entry.is_dir()
+                and (entry.name.startswith(SESSION_DIR_PREFIX) or entry.name.startswith(AUDIT_DIR_PREFIX))
+            )
+            if root.is_dir()
+            else []
+        )
+    except OSError:
+        existing = []
+    if existing:
+        preview = ", ".join(existing[:3]) + ("..." if len(existing) > 3 else "")
+        return (
+            f"note: {len(existing)} {kind} director{'y' if len(existing) == 1 else 'ies'} already exist "
+            f"under {root} ({preview}); the failure happened after their creation and saved artifacts "
+            "may be incomplete"
+        )
+    return f"no {kind} artifacts were saved (the output was refused, unwritable, or never created)"
+
+
+def _print_write_errors(result: dict[str, Any], stream: Any) -> None:
+    for error in result.get("output_write_errors") or []:
+        print(f"note: some artifacts could not be written: {error}", file=stream)
+
+
 def _snapshot_session(args: argparse.Namespace) -> int:
     try:
         result = run_snapshot_session(
@@ -607,8 +641,9 @@ def _snapshot_session(args: argparse.Namespace) -> int:
         )
     except _SNAPSHOT_EXPECTED_ERRORS as exc:
         print(f"MatchQuant snapshot-session blocked: {exc}", file=sys.stderr)
-        print("blocked: the output was refused or unwritable; no session artifacts were saved", file=sys.stderr)
+        print(_artifact_note(args.output_root, "session"), file=sys.stderr)
         return 1
+    _print_write_errors(result, sys.stderr)
     print(f"MatchQuant snapshot session {result['status']}")
     print(f"mode={result['mode']} audit_status={result['audit_status']}")
     if result["reasons"]:
@@ -629,7 +664,7 @@ def _snapshot_run_verify(args: argparse.Namespace) -> int:
         )
     except _SNAPSHOT_EXPECTED_ERRORS as exc:
         print(f"MatchQuant snapshot-run-verify blocked: {exc}", file=sys.stderr)
-        print("blocked: the output was refused or unwritable; no audit artifacts were saved", file=sys.stderr)
+        print(_artifact_note(args.output_root, "audit"), file=sys.stderr)
         return 1
     print(f"MatchQuant snapshot run audit {result['status']}")
     if result["reasons"]:

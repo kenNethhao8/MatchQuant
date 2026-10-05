@@ -75,11 +75,23 @@ def _preflight_recorded_paths(run_dir: Path) -> list[Path]:
     return paths
 
 
-def _hash_inventory(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+def _safe_hash_inventory(paths: Mapping[str, Path]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Hash every inventoried input; expected read failures become explicit unavailable entries."""
+
     inventory: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
     for label, path in paths.items():
-        inventory[label] = {"path": str(path), "sha256": file_sha256(path)}
-    return inventory
+        try:
+            inventory[label] = {"path": str(path), "sha256": file_sha256(path)}
+        except OSError as exc:
+            inventory[label] = {
+                "path": str(path),
+                "sha256": None,
+                "hash_status": "unavailable",
+                "error": str(exc),
+            }
+            errors.append(f"{label}: {type(exc).__name__}: {exc}")
+    return inventory, errors
 
 
 def _expected_goals_equal(left: pd.DataFrame, right: pd.DataFrame) -> bool:
@@ -157,6 +169,7 @@ def execute_snapshot_run_audit(
     stages = {
         "evidence_load": "not_run",
         "issue_evidence": "not_run",
+        "input_inventory": "not_run",
         "repredict": "not_run",
         "inputs_unchanged": "not_run",
     }
@@ -268,19 +281,23 @@ def execute_snapshot_run_audit(
         )
     )
 
-    inventory_paths = {
-        "run_config": run_config_path,
-        "predictions": predictions_path,
-        "snapshot_manifest": snapshot_manifest_path,
-        "snapshot_state": state_path,
-        "fixtures": fixtures_path,
-    }
-    if issue_evidence_path is not None:
-        inventory_paths["issue_evidence"] = Path(issue_evidence_path)
-    inventory = _hash_inventory(inventory_paths)
-
     issue_block: dict[str, Any]
     if issue_evidence_path is not None:
+        if not Path(issue_evidence_path).is_file():
+            stages["issue_evidence"] = "failed"
+            checks.append(
+                {
+                    "check": "issue_evidence_validation",
+                    "status": "failed",
+                    "detail": f"issue evidence JSON does not exist: {issue_evidence_path}",
+                }
+            )
+            return fail(
+                f"issue_evidence_missing_or_unreadable: issue evidence JSON does not exist: {issue_evidence_path}",
+                run_block=run_block,
+                snapshot_block=snapshot_block,
+                inputs_block={},
+            )
         try:
             issue_block = load_issue_evidence(
                 issue_evidence_path,
@@ -295,10 +312,10 @@ def execute_snapshot_run_audit(
             stages["issue_evidence"] = "failed"
             checks.append({"check": "issue_evidence_validation", "status": "failed", "detail": str(exc)})
             return fail(
-                f"issue_evidence_corrupted: {exc}",
+                f"issue_evidence_invalid: {exc}",
                 run_block=run_block,
                 snapshot_block=snapshot_block,
-                inputs_block=inventory,
+                inputs_block={},
             )
         stages["issue_evidence"] = "completed"
         checks.append(
@@ -311,6 +328,35 @@ def execute_snapshot_run_audit(
     else:
         issue_block = missing_issue_evidence()
         stages["issue_evidence"] = "completed"
+
+    inventory_paths = {
+        "run_config": run_config_path,
+        "predictions": predictions_path,
+        "snapshot_manifest": snapshot_manifest_path,
+        "snapshot_state": state_path,
+        "fixtures": fixtures_path,
+    }
+    if issue_evidence_path is not None:
+        inventory_paths["issue_evidence"] = Path(issue_evidence_path)
+    inventory, inventory_errors = _safe_hash_inventory(inventory_paths)
+    if inventory_errors:
+        stages["input_inventory"] = "failed"
+        checks.append(
+            {
+                "check": "input_inventory_hash",
+                "status": "failed",
+                "detail": "; ".join(inventory_errors),
+            }
+        )
+        return fail(
+            "input_read_failed: " + "; ".join(inventory_errors),
+            run_block=run_block,
+            snapshot_block=snapshot_block,
+            issue_block=issue_block,
+            inputs_block=inventory,
+        )
+    stages["input_inventory"] = "completed"
+    checks.append({"check": "input_inventory_hash", "status": "passed", "detail": ""})
 
     repredict_block: dict[str, Any] | None = None
     try:
@@ -474,24 +520,60 @@ def verify_snapshot_run(
     output_root: str | Path,
     issue_evidence_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Audit one existing single-model M11 prediction run and write a new audit directory."""
+    """Audit one existing single-model M11 prediction run and write a new audit directory.
+
+    Output isolation is validated first; the unique audit directory is created
+    before input validation so that expected input/IO failures leave structured
+    blocked JSON/report artifacts under the safe writable output.
+    """
 
     run_dir_path = Path(run_dir).expanduser().resolve()
-    if not run_dir_path.is_dir():
-        raise FileNotFoundError(f"prediction run directory does not exist: {run_dir_path}")
-    if not (run_dir_path / "run_config.json").is_file():
-        raise FileNotFoundError(f"prediction run_config.json does not exist: {run_dir_path / 'run_config.json'}")
     issue_file = (
         Path(issue_evidence_path).expanduser().resolve() if issue_evidence_path is not None else None
     )
-    if issue_file is not None and not issue_file.is_file():
-        raise FileNotFoundError(f"issue evidence JSON does not exist: {issue_file}")
     output_root_path = ensure_safe_output_root(
         output_root,
         [run_dir_path, *([issue_file] if issue_file is not None else []), *_preflight_recorded_paths(run_dir_path)],
     )
     audited_at = utc_now()
     audit_dir = new_output_dir(output_root_path, AUDIT_DIR_PREFIX)
+    if not run_dir_path.is_dir():
+        audit = _blocked_audit(
+            run_dir=run_dir_path,
+            audit_command="matchquant snapshot-run-verify",
+            audited_at=audited_at,
+            output_dir=audit_dir,
+            reasons=[f"run_directory_does_not_exist: {run_dir_path}"],
+            stages={
+                "evidence_load": "not_run",
+                "issue_evidence": "not_run",
+                "input_inventory": "not_run",
+                "repredict": "not_run",
+                "inputs_unchanged": "not_run",
+            },
+            checks=[
+                {
+                    "check": "prediction_evidence_strict_load",
+                    "status": "not_run",
+                    "detail": f"prediction run directory does not exist: {run_dir_path}",
+                }
+            ],
+            run_block={"run_dir": str(run_dir_path)},
+            snapshot_block=None,
+            issue_block=None,
+            inputs_block={},
+        )
+        return {
+            "status": audit["status"],
+            "reasons": audit["reasons"],
+            "audit_dir": str(audit_dir),
+            "prediction_audit_path": str(audit_dir / "prediction_audit.json"),
+            "prediction_audit_sha256": file_sha256(audit_dir / "prediction_audit.json"),
+            "prediction_audit_report_path": str(audit_dir / "prediction_audit.md"),
+            "run_dir": str(run_dir_path),
+            "predictions_usable": audit["predictions_usable"],
+            "manifest": audit,
+        }
     audit = execute_snapshot_run_audit(
         run_dir=run_dir_path,
         issue_evidence_path=issue_file,

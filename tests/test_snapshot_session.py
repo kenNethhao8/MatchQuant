@@ -20,6 +20,7 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 
 from matchquant.cli import main
+import matchquant.snapshot_run_verify as snapshot_run_verify_module
 from matchquant.engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
 from matchquant.engine_snapshot_status import check_engine_snapshot_status
 from matchquant.forecast import run_forecast
@@ -558,6 +559,123 @@ class IssueEvidenceTests(SnapshotSessionTestBase):
             self.assertTrue(Path(session["prediction_audit_path"]).is_file())
             self.assertTrue(Path(session["session_report_path"]).is_file())
 
+    def test_issue_equality_flags_are_recomputed_from_records_not_trusted(self):
+        """R1: six evaluator counterexamples plus a fully-synced hash forgery must all
+        be blocked at the record internal-consistency gate, never as an unrelated
+        hash mismatch of the audited snapshot files."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = "frequency"
+            run_dir, built, _ = self._m11_run(root, model)
+            base_payload = json.loads(
+                self._fresh_issue_evidence(root, built).read_text(encoding="utf-8")
+            )
+            other_canonical = str(root / "research" / "some_other_canonical.csv")
+            variants: dict[str, tuple[object, str]] = {}
+
+            def canonical_hash(payload: dict) -> None:
+                payload["current_pointer"]["canonical"]["sha256"] = "0" * 64
+                payload["comparison"]["canonical"]["pointer_sha256"] = "0" * 64
+
+            def canonical_hash_fully_synced(payload: dict) -> None:
+                canonical_hash(payload)
+                payload["current_pointer"]["canonical"]["recorded_sha256"] = "0" * 64
+                payload["current_pointer"]["processed_manifest"]["output_sha256"] = "0" * 64
+
+            def manifest_hash(payload: dict) -> None:
+                payload["current_pointer"]["processed_manifest"]["sha256"] = "1" * 64
+                payload["comparison"]["processed_manifest"]["pointer_sha256"] = "1" * 64
+
+            def dataset_version(payload: dict) -> None:
+                payload["current_pointer"]["dataset_version"] = "m2.1-forged"
+                payload["comparison"]["dataset_version"]["pointer"] = "m2.1-forged"
+                payload["current_pointer"]["processed_manifest"]["dataset_version"] = "m2.1-forged"
+
+            def canonical_path(payload: dict) -> None:
+                payload["current_pointer"]["canonical"]["path"] = other_canonical
+                payload["comparison"]["canonical"]["pointer_path"] = other_canonical
+
+            def snapshot_status(payload: dict) -> None:
+                payload["snapshot"]["status"] = "invalid"
+
+            def bound_cutoff(payload: dict) -> None:
+                payload["snapshot"]["history"]["used_data_cutoff"] = "2099-01-01"
+
+            flag_gate = "contradicts"
+            for name, mutator, marker in (
+                ("canonical_hash_synced_pointer_and_comparison", canonical_hash, (flag_gate, "recorded_sha256")),
+                ("canonical_hash_fully_synced", canonical_hash_fully_synced, (flag_gate,)),
+                ("manifest_hash_synced_pointer_and_comparison", manifest_hash, (flag_gate,)),
+                ("dataset_version_synced_pointer_and_comparison", dataset_version, (flag_gate,)),
+                ("canonical_path_synced_pointer_and_comparison", canonical_path, (flag_gate,)),
+                ("snapshot_status_invalid", snapshot_status, ("must be 'valid'",)),
+                ("bound_used_cutoff_2099", bound_cutoff, ("strictly loaded snapshot record",)),
+            ):
+                variants[name] = (mutator, marker)
+
+            issue_dir = root / "runtime" / "inputs" / "recomputed-issues"
+            for name, (mutator, marker) in variants.items():
+                payload = json.loads(json.dumps(base_payload))
+                mutator(payload)
+                issue_path = issue_dir / f"{name}.json"
+                write_json(payload, issue_path)
+                with self.subTest(variant=name):
+                    verification = verify_snapshot_run(
+                        run_dir,
+                        output_root=root / "runtime" / "audits-recomputed",
+                        issue_evidence_path=issue_path,
+                    )
+                    self.assertEqual(verification["status"], "blocked", name)
+                    reason = verification["reasons"][0]
+                    self.assertTrue(reason.startswith("issue_evidence_invalid:"), reason)
+                    self.assertTrue(any(expected in reason for expected in marker), reason)
+                    self.assertNotIn("snapshot appears modified or tampered", reason)
+                    self.assertNotIn("state SHA-256 does not match the actual state file", reason)
+                    self.assertFalse(verification["predictions_usable"])
+                    with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                        with self.assertRaises(SystemExit) as verify_exit:
+                            main(
+                                [
+                                    "snapshot-run-verify",
+                                    "--forecast-run",
+                                    str(run_dir),
+                                    "--output-root",
+                                    str(root / "runtime" / "audits-recomputed-cli"),
+                                    "--issue-evidence",
+                                    str(issue_path),
+                                ]
+                            )
+                    self.assertEqual(verify_exit.exception.code, 1, name)
+
+            session = run_snapshot_session(
+                built["snapshot_manifest_path"],
+                self._write_fixtures(root),
+                mode="replay",
+                output_root=root / "runtime" / "sessions-recomputed",
+                issue_evidence_path=issue_dir / "canonical_hash_fully_synced.json",
+            )
+            self.assertEqual(session["status"], "blocked")
+            self.assertIn("issue_evidence_invalid", session["reasons"][0])
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as session_exit:
+                    main(
+                        [
+                            "snapshot-session",
+                            "--snapshot-manifest",
+                            str(built["snapshot_manifest_path"]),
+                            "--fixtures",
+                            str(self._write_fixtures(root / "recomputed-session-case")),
+                            "--mode",
+                            "research",
+                            "--output-root",
+                            str(root / "runtime" / "sessions-recomputed-cli"),
+                            "--issue-evidence",
+                            str(issue_dir / "bound_used_cutoff_2099.json"),
+                        ]
+                    )
+            self.assertEqual(session_exit.exception.code, 1)
+
 
 class AuditNegativeTests(SnapshotSessionTestBase):
     def test_probability_tamper_with_synced_recorded_hash_is_rejected_by_repredict(self):
@@ -829,11 +947,12 @@ class SessionContractTests(SnapshotSessionTestBase):
             self.assertEqual(bad_mode.exception.code, 2)
             self.assertIn("usage", stderr.getvalue().lower())
 
-    def test_missing_inputs_are_blocked_without_artifacts(self):
+    def test_missing_inputs_produce_structured_blocked_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             run_dir, built, fixtures_path = self._m11_run(root, "frequency")
-            with contextlib.redirect_stdout(io_module.StringIO()):
+            stderr = io_module.StringIO()
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
                 with self.assertRaises(SystemExit) as missing_fixture:
                     main(
                         [
@@ -841,7 +960,7 @@ class SessionContractTests(SnapshotSessionTestBase):
                             "--snapshot-manifest",
                             str(built["snapshot_manifest_path"]),
                             "--fixtures",
-                            str(root / "runtime" / "nope.csv"),
+                            str(root / "runtime" / "inputs" / "nope.csv"),
                             "--mode",
                             "replay",
                             "--output-root",
@@ -849,10 +968,21 @@ class SessionContractTests(SnapshotSessionTestBase):
                         ]
                     )
             self.assertEqual(missing_fixture.exception.code, 1)
-            self.assertFalse((root / "runtime" / "sessions").exists())
+            self.assertNotIn("refused or unwritable", stderr.getvalue())
+            sessions = list((root / "runtime" / "sessions").iterdir())
+            self.assertEqual(len(sessions), 1)
+            manifest = json.loads((sessions[0] / "session_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "blocked")
+            self.assertFalse(manifest["predictions_usable"])
+            self.assertEqual(manifest["stages"]["fixtures_load"], "failed")
+            self.assertEqual(manifest["stages"]["prediction"], "not_run")
+            self.assertTrue((sessions[0] / "session_report.md").is_file())
+            self.assertTrue((sessions[0] / "prediction_audit.json").is_file())
+            self.assertTrue((sessions[0] / "prediction_audit.md").is_file())
+            self.assertIsNone(manifest["inputs"]["fixtures"]["sha256"])
 
             (run_dir / "predictions.csv").unlink()
-            with contextlib.redirect_stdout(io_module.StringIO()):
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
                 with self.assertRaises(SystemExit) as blocked_verify:
                     main(
                         [
@@ -869,6 +999,130 @@ class SessionContractTests(SnapshotSessionTestBase):
             payload = json.loads((audit_dirs[0] / "prediction_audit.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "blocked")
             self.assertFalse(payload["predictions_usable"])
+            self.assertTrue((audit_dirs[0] / "prediction_audit.md").is_file())
+
+            missing_run = root / "runtime" / "no_such_run"
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as missing_run_exit:
+                    main(
+                        [
+                            "snapshot-run-verify",
+                            "--forecast-run",
+                            str(missing_run),
+                            "--output-root",
+                            str(root / "runtime" / "audits-missing-run"),
+                        ]
+                    )
+            self.assertEqual(missing_run_exit.exception.code, 1)
+            missing_run_dirs = list((root / "runtime" / "audits-missing-run").iterdir())
+            self.assertEqual(len(missing_run_dirs), 1)
+            missing_run_payload = json.loads(
+                (missing_run_dirs[0] / "prediction_audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(missing_run_payload["status"], "blocked")
+            self.assertIn("run_directory_does_not_exist", missing_run_payload["reasons"][0])
+
+            missing_issue = root / "runtime" / "inputs" / "nope_issue.json"
+            intact_run, _, _ = self._m11_run(root / "missing-issue-case", "frequency")
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as missing_issue_exit:
+                    main(
+                        [
+                            "snapshot-run-verify",
+                            "--forecast-run",
+                            str(intact_run),
+                            "--output-root",
+                            str(root / "runtime" / "audits-missing-issue"),
+                            "--issue-evidence",
+                            str(missing_issue),
+                        ]
+                    )
+            self.assertEqual(missing_issue_exit.exception.code, 1)
+            missing_issue_dirs = list((root / "runtime" / "audits-missing-issue").iterdir())
+            self.assertEqual(len(missing_issue_dirs), 1)
+            missing_issue_payload = json.loads(
+                (missing_issue_dirs[0] / "prediction_audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(missing_issue_payload["status"], "blocked")
+            self.assertIn("issue_evidence_missing_or_unreadable", missing_issue_payload["reasons"][0])
+            self.assertFalse(missing_issue_payload["predictions_usable"])
+            self.assertTrue((missing_issue_dirs[0] / "prediction_audit.md").is_file())
+
+    def test_verify_missing_issue_and_inventory_io_failure_save_blocked_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir, built, _ = self._m11_run(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+            real_file_sha256 = snapshot_run_verify_module.file_sha256
+
+            def failing_issue_hash(path, *args, **kwargs):
+                if Path(path) == issue_path:
+                    raise PermissionError("simulated issue inventory read failure")
+                return real_file_sha256(path, *args, **kwargs)
+
+            with patch(
+                "matchquant.snapshot_run_verify.file_sha256", side_effect=failing_issue_hash
+            ):
+                verification = verify_snapshot_run(
+                    run_dir, output_root=root / "runtime" / "audits-io", issue_evidence_path=issue_path
+                )
+                self.assertEqual(verification["status"], "blocked")
+                payload = json.loads(
+                    Path(verification["prediction_audit_path"]).read_text(encoding="utf-8")
+                )
+                self.assertIn("input_read_failed", payload["reasons"][0])
+                self.assertIn("PermissionError", payload["reasons"][0])
+                with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                    with self.assertRaises(SystemExit) as blocked_exit:
+                        main(
+                            [
+                                "snapshot-run-verify",
+                                "--forecast-run",
+                                str(run_dir),
+                                "--output-root",
+                                str(root / "runtime" / "audits-io-cli"),
+                                "--issue-evidence",
+                                str(issue_path),
+                            ]
+                        )
+                self.assertEqual(blocked_exit.exception.code, 1)
+            issue_entry = payload["inputs"]["issue_evidence"]
+            self.assertIsNone(issue_entry["sha256"])
+            self.assertEqual(issue_entry["hash_status"], "unavailable")
+            self.assertEqual(issue_entry["path"], str(issue_path))
+            self.assertFalse(payload["predictions_usable"])
+            self.assertEqual(payload["stages"]["input_inventory"], "failed")
+            self.assertEqual(payload["stages"]["repredict"], "not_run")
+            self.assertTrue(Path(verification["prediction_audit_report_path"]).is_file())
+
+    def test_report_write_failure_is_recorded_honestly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            fixtures_path = self._write_fixtures(root)
+
+            def failing_report(path, manifest):
+                raise OSError("simulated report write failure")
+
+            with patch(
+                "matchquant.snapshot_session.write_snapshot_session_report",
+                side_effect=failing_report,
+            ):
+                session = run_snapshot_session(
+                    built["snapshot_manifest_path"],
+                    fixtures_path,
+                    mode="replay",
+                    output_root=root / "runtime" / "sessions",
+                )
+            self.assertEqual(session["status"], "ready")
+            self.assertIn("session_report", session["output_write_errors"][0])
+            manifest = json.loads(
+                Path(session["session_manifest_path"]).read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["output_write_errors"])
+            self.assertIsNone(manifest["output_hashes"]["session_report"])
+            self.assertFalse(Path(session["session_report_path"]).exists())
+            self.assertTrue(Path(session["session_manifest_path"]).is_file())
 
     def test_input_files_unchanged_across_blocked_and_successful_audits(self):
         with tempfile.TemporaryDirectory() as temporary:
