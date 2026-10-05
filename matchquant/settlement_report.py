@@ -28,12 +28,6 @@ def _producer_title(forecast: Mapping[str, Any]) -> str:
     return f"M4（{schema}）" if schema and schema != "m4-forecast-v1" else "M4"
 
 
-def _metric_text(value: object) -> str:
-    if value is None:
-        return "不可用（已结算数为 0）"
-    return f"{float(value):.8f}"
-
-
 def write_settlement_report(
     config: Mapping[str, Any], settlement: pd.DataFrame, path: str | Path
 ) -> Path:

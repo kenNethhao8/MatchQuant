@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from .backtest import _parse_boundary
 from .engine_snapshot import SNAPSHOT_PREDICT_SCHEMA_VERSION
 from .engine_snapshot_manifest import load_engine_snapshot
 from .engine_snapshot_support import configuration_hash
@@ -29,9 +30,8 @@ from .fixtures import load_fixtures
 from .forecast import FORECAST_SCHEMA_VERSION, _configuration_hash
 from .io import file_sha256
 from .models import MODEL_NAMES
-from .schema import DataValidationError
+from .schema import DataValidationError, has_explicit_time
 from .settlement_validation import (
-    _as_of_from_config,
     _read_prediction_csv,
     _validate_prediction_dates,
     load_forecast_run,
@@ -131,6 +131,107 @@ def _m4_evidence(run_dir: Path) -> dict[str, Any]:
     }
 
 
+def _m11_as_of_evidence(
+    config: Mapping[str, Any], *, snapshot_as_of: Mapping[str, Any]
+) -> tuple[pd.Timestamp, bool, dict[str, object]]:
+    """Bind the M11 run's actually recorded as_of value/timestamp/date_only.
+
+    Unlike the M4 helper, a missing or empty recorded field is rejected instead of
+    being derived from ``as_of.value``; M11 producer evidence must be complete.
+    """
+
+    raw = config.get("as_of")
+    if not isinstance(raw, Mapping):
+        raise DataValidationError("M11 run config must contain an as_of object")
+    for field in ("value", "timestamp", "date_only"):
+        if field not in raw or raw[field] is None or (isinstance(raw[field], str) and not raw[field].strip()):
+            raise DataValidationError(f"M11 run config as_of.{field} must be actually recorded and non-empty")
+    if not isinstance(raw["date_only"], bool):
+        raise DataValidationError("M11 run config as_of.date_only must be a boolean")
+    try:
+        timestamp, inferred_date_only = _parse_boundary(raw["value"], "snapshot prediction as_of")
+    except (TypeError, ValueError) as exc:
+        raise DataValidationError(str(exc)) from exc
+    if bool(raw["date_only"]) != inferred_date_only:
+        raise DataValidationError("M11 run config as_of.date_only is inconsistent with as_of.value")
+    try:
+        parsed_recorded = pd.Timestamp(raw["timestamp"])
+    except (TypeError, ValueError) as exc:
+        raise DataValidationError("M11 run config as_of.timestamp is not a parseable timestamp") from exc
+    if pd.isna(parsed_recorded) or parsed_recorded != timestamp:
+        raise DataValidationError("M11 run config as_of.timestamp does not match as_of.value")
+    if str(raw["value"]) != str(snapshot_as_of.get("value")):
+        raise DataValidationError("M11 run as_of.value does not match the snapshot manifest as_of")
+    if str(raw["timestamp"]) != str(snapshot_as_of.get("timestamp")):
+        raise DataValidationError("M11 run as_of.timestamp does not match the snapshot manifest as_of")
+    if bool(raw["date_only"]) != bool(snapshot_as_of.get("date_only")):
+        raise DataValidationError("M11 run as_of.date_only does not match the snapshot manifest as_of")
+    return timestamp, inferred_date_only, {
+        "value": str(raw["value"]),
+        "timestamp": timestamp.isoformat(),
+        "date_only": inferred_date_only,
+    }
+
+
+def _validate_used_data_cutoff(
+    history: Mapping[str, Any], *, as_of: pd.Timestamp, date_only: bool
+) -> pd.Timestamp | None:
+    """Strict validity and temporal gate for the snapshot's recorded used_data_cutoff.
+
+    ``rows_used_before_as_of > 0`` requires a legal, finite used cutoff; an empty
+    training source keeps its legal ``null``. A date-only as_of requires the used
+    cutoff strictly before the day boundary; an exact as_of requires an explicit
+    used timestamp strictly before the boundary, and rejects a same-day date-only
+    cutoff because it cannot prove time order. The full-input history cutoff is
+    never compared here, and history files are never opened.
+    """
+
+    rows_used = history.get("rows_used_before_as_of")
+    if isinstance(rows_used, bool) or not isinstance(rows_used, int):
+        raise DataValidationError("snapshot history rows_used_before_as_of must be an integer")
+    used_raw = history.get("used_data_cutoff")
+    if rows_used > 0 and used_raw is None:
+        raise DataValidationError(
+            "snapshot history records rows_used_before_as_of > 0 but no used_data_cutoff; "
+            "missing lineage must not be treated as an empty training source"
+        )
+    if rows_used == 0:
+        if used_raw is not None:
+            raise DataValidationError(
+                "snapshot history records no training rows before as_of but a non-null used_data_cutoff; "
+                "recorded lineage is inconsistent"
+            )
+        return None
+    text = str(used_raw).strip()
+    if not text:
+        raise DataValidationError("snapshot used_data_cutoff is recorded but empty; lineage is inconsistent")
+    try:
+        used_timestamp = pd.Timestamp(text)
+    except (TypeError, ValueError) as exc:
+        raise DataValidationError(
+            f"snapshot used_data_cutoff is not a parseable timestamp: {used_raw!r}"
+        ) from exc
+    if pd.isna(used_timestamp):
+        raise DataValidationError(
+            f"snapshot used_data_cutoff is not a valid finite timestamp: {used_raw!r}"
+        )
+    if has_explicit_time(text):
+        boundary = as_of.normalize() if date_only else as_of
+        if used_timestamp >= boundary:
+            raise DataValidationError(
+                "snapshot used_data_cutoff timestamp is not strictly before the as_of boundary; "
+                f"recorded lineage would let the model state use matches at or after as_of: {text}"
+            )
+    else:
+        if used_timestamp >= as_of.normalize():
+            raise DataValidationError(
+                "snapshot used_data_cutoff is a date-only value on or after the as_of day; "
+                "it cannot prove that the last used match is strictly before the as_of boundary: "
+                f"{text}"
+            )
+    return used_timestamp
+
+
 def _m11_evidence(run_dir: Path, config: Mapping[str, Any], config_path: Path) -> dict[str, Any]:
     """Strictly validate one single-model M11 run against its recorded snapshot."""
 
@@ -211,10 +312,25 @@ def _m11_evidence(run_dir: Path, config: Mapping[str, Any], config_path: Path) -
             "the snapshot appears modified or tampered"
         )
 
-    manifest_models = {str(item["model"]): item for item in manifest["models"]}
-    if model_name not in manifest_models:
-        raise DataValidationError("M11 run model is not present in the snapshot manifest")
-    snapshot_model = manifest_models[model_name]
+    manifest_model_names = manifest["model_names"]
+    if len(manifest_model_names) != 1 or str(manifest_model_names[0]) != model_name:
+        raise DataValidationError(
+            "single-model M11 runs must be produced from a single-model snapshot; "
+            f"the source snapshot contains models: {', '.join(manifest_model_names)}"
+        )
+    if len(manifest["models"]) != 1:
+        raise DataValidationError(
+            "single-model M11 runs must match a single-model snapshot manifest; "
+            f"the source snapshot manifest records {len(manifest['models'])} models"
+        )
+    if len(loaded["models"]) != 1:
+        raise DataValidationError(
+            "single-model M11 runs must match a single-model snapshot state; "
+            f"the snapshot state contains {len(loaded['models'])} model states"
+        )
+    snapshot_model = manifest["models"][0]
+    if str(snapshot_model.get("model")) != model_name:
+        raise DataValidationError("M11 snapshot model does not match the run model")
     if run_model.get("config") != snapshot_model.get("config"):
         raise DataValidationError("M11 run model config does not match the snapshot manifest model config")
     if str(run_model.get("config_sha256")) != str(snapshot_model.get("config_sha256")):
@@ -229,34 +345,34 @@ def _m11_evidence(run_dir: Path, config: Mapping[str, Any], config_path: Path) -
             "M11 run per-model state hash does not match the snapshot manifest per-model state hash"
         )
 
-    as_of, date_only, as_of_meta = _as_of_from_config(config, label="M11 run config")
-    snapshot_as_of = manifest["as_of"]
-    if str(config["as_of"].get("value")) != str(snapshot_as_of.get("value")):
-        raise DataValidationError("M11 run as_of.value does not match the snapshot manifest as_of")
-    if as_of_meta["timestamp"] != str(snapshot_as_of.get("timestamp")):
-        raise DataValidationError("M11 run as_of.timestamp does not match the snapshot manifest as_of")
-    if date_only != bool(snapshot_as_of.get("date_only")):
-        raise DataValidationError("M11 run as_of.date_only does not match the snapshot manifest as_of")
+    as_of, date_only, as_of_meta = _m11_as_of_evidence(config, snapshot_as_of=manifest["as_of"])
 
     history = manifest["history"]
+    for field in ("history_path", "history_sha256", "history_cutoff"):
+        if field not in snapshot_evidence:
+            raise DataValidationError(f"M11 run config snapshot evidence is missing field: {field}")
+    for field in ("history_path", "history_sha256"):
+        if snapshot_evidence[field] is None or not str(snapshot_evidence[field]).strip():
+            raise DataValidationError(f"M11 run config snapshot evidence field {field} must be recorded and non-empty")
+    recorded_history_path = Path(str(snapshot_evidence["history_path"])).expanduser().resolve()
+    snapshot_history_path = Path(str(history["path"])).expanduser().resolve()
+    if recorded_history_path != snapshot_history_path:
+        raise DataValidationError(
+            "M11 run config recorded history_path does not match the snapshot manifest history path"
+        )
+    if str(snapshot_evidence["history_sha256"]).lower() != str(history["sha256"]).lower():
+        raise DataValidationError(
+            "M11 run config recorded history_sha256 does not match the snapshot manifest history hash"
+        )
     used_data_cutoff = history.get("used_data_cutoff")
-    recorded_history_cutoff = snapshot_evidence.get("history_cutoff")
-    if (recorded_history_cutoff or None) != (used_data_cutoff or None):
+    recorded_history_cutoff = snapshot_evidence["history_cutoff"]
+    if (str(recorded_history_cutoff) if recorded_history_cutoff is not None else None) != (
+        str(used_data_cutoff) if used_data_cutoff is not None else None
+    ):
         raise DataValidationError(
             "M11 run config recorded history_cutoff does not match the snapshot manifest used_data_cutoff"
         )
-    if used_data_cutoff:
-        used_timestamp = pd.Timestamp(used_data_cutoff)
-        if date_only and used_timestamp >= as_of.normalize():
-            raise DataValidationError(
-                "snapshot used_data_cutoff is not strictly before the date-only as_of boundary; "
-                "recorded lineage would let the model state use matches at or after as_of"
-            )
-        if not date_only and used_timestamp.normalize() > as_of.normalize():
-            raise DataValidationError(
-                "snapshot used_data_cutoff is later than the as_of day; "
-                "recorded lineage would let the model state use matches after as_of"
-            )
+    _validate_used_data_cutoff(history, as_of=as_of, date_only=date_only)
 
     recorded_hashes: list[str] = []
     for value in (config.get("predictions_sha256"), (config.get("outputs") or {}).get("predictions_sha256") if isinstance(config.get("outputs"), Mapping) else None):

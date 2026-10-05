@@ -145,6 +145,23 @@ class PredictionEvidenceTestBase(unittest.TestCase):
         results.loc[:, REQUIRED_COLUMNS].to_csv(path, index=False)
         return path
 
+    def _forge_used_cutoff(self, m11_run: Path, built: dict, new_cutoff: object) -> None:
+        """Rewrite the snapshot's used_data_cutoff and sync every recorded hash/run field
+        so a rejection can only come from the temporal/validity gate itself."""
+
+        manifest_path = Path(built["snapshot_manifest_path"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["history"]["used_data_cutoff"] = new_cutoff
+        write_snapshot_manifest(manifest, manifest_path)
+        config_path = m11_run / "run_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["snapshot"]["manifest_sha256"] = file_sha256(manifest_path)
+        config["snapshot"]["manifest_content_sha256"] = json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        )["manifest_sha256"]
+        config["snapshot"]["history_cutoff"] = new_cutoff
+        write_json(config, config_path)
+
     def _rows(self, root: Path, *match_ids: str) -> pd.DataFrame:
         return _history_frame().loc[_history_frame()["match_id"].isin(match_ids), REQUIRED_COLUMNS].copy()
 
@@ -300,22 +317,28 @@ class M11SettlementSafetyTests(PredictionEvidenceTestBase):
             m11_run, built = self._m11_run(root, "frequency")
             history_path = root / "evidence" / "history.csv"
             manifest_path = root / "evidence" / "history_manifest.json"
-            history_hash = file_sha256(history_path)
             history_path.unlink()
             manifest_path.unlink()
 
             opened_history: list[str] = []
             real_open = builtins.open
 
-            def guarded_open(file, *args, **kwargs):
+            def guarded_open(module, file, *args, **kwargs):
                 text = str(file)
                 if "history" in Path(text).name.lower():
-                    opened_history.append(text)
+                    opened_history.append(f"{module}:{text}")
                 return real_open(file, *args, **kwargs)
 
             results_path = self._results_file(root, _history_frame().loc[:, REQUIRED_COLUMNS])
             with (
-                patch("builtins.open", side_effect=guarded_open),
+                patch(
+                    "builtins.open",
+                    side_effect=lambda file, *a, **k: guarded_open("builtins", file, *a, **k),
+                ),
+                patch(
+                    "io.open",
+                    side_effect=lambda file, *a, **k: guarded_open("io", file, *a, **k),
+                ),
                 patch("urllib.request.urlopen", side_effect=AssertionError("network used")),
             ):
                 result = settle_forecast_run(m11_run, results_path, output_root=root / "settlement")
@@ -323,22 +346,162 @@ class M11SettlementSafetyTests(PredictionEvidenceTestBase):
             self.assertEqual(result["counts"]["settled"], 2)
             self.assertEqual(opened_history, [])
 
-    def test_used_cutoff_at_or_after_date_only_as_of_is_rejected_even_when_manifest_declares_it(self):
+    def test_recorded_history_link_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            m11_run, _ = self._m11_run(root, "frequency")
+            config_path = m11_run / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["snapshot"]["history_path"] = str(root / "somewhere-else.csv")
+            config["snapshot"]["history_sha256"] = "0" * 64
+            write_json(config, config_path)
+            with self.assertRaisesRegex(DataValidationError, "history_path does not match"):
+                load_prediction_evidence(m11_run)
+
+    def test_recorded_history_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            m11_run, _ = self._m11_run(root, "frequency")
+            config_path = m11_run / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["snapshot"]["history_sha256"] = "0" * 64
+            write_json(config, config_path)
+            with self.assertRaisesRegex(DataValidationError, "history_sha256 does not match"):
+                load_prediction_evidence(m11_run)
+
+    def test_missing_history_link_fields_are_rejected(self):
+        for field in ("history_path", "history_sha256", "history_cutoff"):
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    m11_run, _ = self._m11_run(root, "frequency")
+                    config_path = m11_run / "run_config.json"
+                    config = json.loads(config_path.read_text(encoding="utf-8"))
+                    del config["snapshot"][field]
+                    write_json(config, config_path)
+                    with self.assertRaisesRegex(DataValidationError, f"missing field: {field}"):
+                        load_prediction_evidence(m11_run)
+
+    def test_missing_m11_as_of_timestamp_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            m11_run, _ = self._m11_run(root, "frequency")
+            config_path = m11_run / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            del config["as_of"]["timestamp"]
+            write_json(config, config_path)
+            with self.assertRaisesRegex(DataValidationError, "as_of.timestamp must be actually recorded"):
+                load_prediction_evidence(m11_run)
+
+    def test_truncated_multimodel_run_still_rejected_against_multimodel_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            history_path, manifest_path = self._write_history_evidence(root / "evidence", _history_frame())
+            fixtures_path = root / "fixtures.csv"
+            _fixtures_frame().to_csv(fixtures_path, index=False)
+            built = build_engine_snapshot(
+                history_path,
+                manifest_path,
+                "2024-01-07",
+                model_names=["frequency", "elo"],
+                model_configs={name: MODEL_CONFIGS[name] for name in ("frequency", "elo")},
+                output_root=root / "snapshots",
+            )
+            predicted = predict_from_engine_snapshot(
+                built["snapshot_manifest_path"], fixtures_path, output_root=root / "m11-runs"
+            )
+            run_dir = Path(predicted["run_dir"])
+            with self.assertRaisesRegex(DataValidationError, "multi-model M11 prediction runs are not supported"):
+                load_prediction_evidence(run_dir)
+
+            config_path = run_dir / "run_config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["model_names"] = ["frequency"]
+            config["models"] = [item for item in config["models"] if item["model"] == "frequency"]
+            predictions = pd.read_csv(run_dir / "predictions.csv", dtype="string", keep_default_na=False)
+            predictions.loc[predictions["model"].eq("frequency")].to_csv(
+                run_dir / "predictions.csv", index=False
+            )
+            new_hash = file_sha256(run_dir / "predictions.csv")
+            config["predictions_sha256"] = new_hash
+            config["outputs"]["predictions_sha256"] = new_hash
+            write_json(config, config_path)
+
+            with self.assertRaisesRegex(DataValidationError, "single-model snapshot"):
+                load_prediction_evidence(run_dir)
+            results_path = self._results_file(root, _history_frame().loc[:, REQUIRED_COLUMNS])
+            with self.assertRaisesRegex(DataValidationError, "single-model snapshot"):
+                settle_forecast_run(run_dir, results_path, output_root=root / "settlement")
+
+    def test_used_cutoff_on_or_after_date_only_as_of_is_rejected_at_the_temporal_gate(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             m11_run, built = self._m11_run(root, "frequency")
-            manifest_path = Path(built["snapshot_manifest_path"])
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["history"]["used_data_cutoff"] = "2024-01-07"
-            write_snapshot_manifest(manifest, manifest_path)
-            config_path = m11_run / "run_config.json"
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            config["snapshot"]["manifest_sha256"] = file_sha256(manifest_path)
-            config["snapshot"]["manifest_content_sha256"] = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )["manifest_sha256"]
-            write_json(config, config_path)
-            with self.assertRaisesRegex(DataValidationError, "used_data_cutoff"):
+            self._forge_used_cutoff(m11_run, built, "2024-01-07")
+            with self.assertRaisesRegex(
+                DataValidationError,
+                "date-only value on or after the as_of day",
+            ):
+                load_prediction_evidence(m11_run)
+
+    def test_used_cutoff_validity_and_exact_time_gate(self):
+        """R1: same-day later/equal explicit cutoffs, NaT, and null-with-used-rows reject;
+        same-day earlier explicit time and empty-training null pass."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exact_history = self._exact_time_history_frame()
+            for cutoff, message in (
+                ("2024-01-07T18:00:00", "not strictly before the as_of boundary"),
+                ("2024-01-07T12:00:00", "not strictly before the as_of boundary"),
+                ("NaT", "not a valid finite timestamp"),
+                (None, "no used_data_cutoff"),
+            ):
+                with self.subTest(cutoff=cutoff):
+                    case_root = root / str(abs(hash((cutoff, message))))
+                    m11_run, built = self._m11_run(
+                        case_root,
+                        "frequency",
+                        as_of="2024-01-07T12:00:00",
+                        fixtures=_late_fixtures_frame(),
+                        history=exact_history,
+                    )
+                    self._forge_used_cutoff(m11_run, built, cutoff)
+                    with self.assertRaisesRegex(DataValidationError, message):
+                        load_prediction_evidence(m11_run)
+
+            accepted_root = root / "accepted"
+            m11_run, built = self._m11_run(
+                accepted_root,
+                "frequency",
+                as_of="2024-01-07T12:00:00",
+                fixtures=_late_fixtures_frame(),
+                history=exact_history,
+            )
+            self._forge_used_cutoff(m11_run, built, "2024-01-07T07:00:00")
+            evidence = load_prediction_evidence(m11_run)
+            self.assertEqual(evidence["origin_evidence"]["used_data_cutoff"], "2024-01-07T07:00:00")
+
+    def test_empty_training_with_null_cutoff_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            m11_run, built = self._m11_run(root, "frequency", as_of="2023-12-31")
+            manifest = json.loads(Path(built["snapshot_manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["history"]["rows_used_before_as_of"], 0)
+            self.assertIsNone(manifest["history"]["used_data_cutoff"])
+            evidence = load_prediction_evidence(m11_run)
+            self.assertIsNone(evidence["origin_evidence"]["used_data_cutoff"])
+            results_path = self._results_file(root, _history_frame().loc[:, REQUIRED_COLUMNS])
+            result = settle_forecast_run(m11_run, results_path, output_root=root / "settlement")
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(result["counts"]["settled"], 2)
+
+    def test_non_null_cutoff_with_empty_training_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            m11_run, built = self._m11_run(root, "frequency", as_of="2023-12-31")
+            self._forge_used_cutoff(m11_run, built, "2024-01-06")
+            with self.assertRaisesRegex(DataValidationError, "non-null used_data_cutoff"):
                 load_prediction_evidence(m11_run)
 
     def test_tampered_predictions_file_is_rejected(self):
