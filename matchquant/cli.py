@@ -730,7 +730,7 @@ def _runtime_bundle_build(args: argparse.Namespace) -> int:
     if result["bundle_manifest_sha256"]:
         print(f"bundle_manifest={result['bundle_manifest_path']}")
         print(f"bundle_manifest_sha256={result['bundle_manifest_sha256']}")
-    print(f"files={result['file_count']} payload_bytes={result['payload_bytes']} total_bytes={result['total_bytes']} limit_bytes={result['limit_bytes']}")
+    print(f"files={result['file_count']} actual_files={result['actual_file_count']} payload_bytes={result['payload_bytes']} total_bytes={result['total_bytes']} limit_bytes={result['limit_bytes']}")
     return 0 if result["status"] == "ready" else 1
 
 

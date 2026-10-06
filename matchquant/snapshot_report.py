@@ -81,15 +81,21 @@ def write_snapshot_audit_report(path: Path, audit: Mapping[str, Any]) -> Path:
         lines.extend(["", "## 运行包 lineage", ""])
         lines.append(f"- bundle manifest：`{_markdown_text(str(bundle.get('bundle_manifest_path')))}`")
         lines.append(
-            f"- validation_kind：`{_markdown_text(str(bundle.get('validation_kind')))}`"
+            f"- validation_kind：`{_markdown_text(str(bundle.get('validation_kind') or 'unavailable'))}`"
+        )
+        original_block = bundle.get("original") or {}
+        derived_block = bundle.get("derived") or {}
+        lines.append(
+            f"- original manifest file hash：`{_markdown_text(str(original_block.get('manifest_file_sha256') or 'unavailable'))}`"
         )
         lines.append(
-            f"- original manifest file hash：`{_markdown_text(str(bundle.get('original', {}).get('manifest_file_sha256')))}`"
+            f"- derived manifest file hash：`{_markdown_text(str(derived_block.get('file_sha256') or 'unavailable'))}`"
         )
         lines.append(
-            f"- derived manifest file hash：`{_markdown_text(str((bundle.get('derived') or {}).get('file_sha256')))}`"
+            f"- state SHA-256（原/派生一致）：`{_markdown_text(str(bundle.get('state_file_sha256') or 'unavailable'))}`"
         )
-        lines.append(f"- state SHA-256（原/派生一致）：`{_markdown_text(str(bundle.get('state_file_sha256')))}`")
+        if bundle.get("verification_status") == "blocked":
+            lines.append("- bundle 验证失败：本次审计无法建立派生桥，相关 lineage 字段不可用。")
     checks = audit.get("engine_checks")
     if isinstance(checks, list) and checks:
         lines.extend(["", "## 工程检查", "", "| 检查 | 状态 | 说明 |", "|---|---|---|"])

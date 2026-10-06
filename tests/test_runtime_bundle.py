@@ -708,14 +708,11 @@ class BundleLineageTests(RuntimeBundleTestBase):
             first_team = payload["teams"][0]
             payload["teams"] = [f"{first_team} City" if item == first_team else item for item in payload["teams"]]
             write_json(payload, team_index_path)
-            new_hash = file_sha256(team_index_path)
 
             def sync(bundle_payload):
-                bundle_payload["team_index"]["file_sha256"] = new_hash
-                for entry in bundle_payload["files"]:
-                    if entry["path"] == "team_index.json":
-                        entry["sha256"] = new_hash
+                bundle_payload["team_index"]["file_sha256"] = file_sha256(team_index_path)
 
+            self._sync_bundle_records(bundle_root, {"team_index.json": team_index_path})
             self._rewrite_bundle_manifest(bundle_root, sync)
             verification = verify_runtime_bundle(bundle_root / "bundle_manifest.json")
             self.assertEqual(verification["status"], "blocked", verification["reasons"])
@@ -1153,6 +1150,449 @@ class BundleIsolationTests(RuntimeBundleTestBase):
             )
             self.assertEqual(audit_payload["issue_evidence"]["path"].endswith("issue_audit.json"), True)
             self.assertIn(str(bundle_root), audit_payload["issue_evidence"]["path"])
+
+
+class BundleReworkTests(RuntimeBundleTestBase):
+    """R1-R4 rework regressions: precheck-before-read, structured bad-bundle
+    audits, honest build persistence, and the fixed v1 payload set."""
+
+    @contextlib.contextmanager
+    def _resolved_open_guard(self):
+        """Record builtins.open/io.open calls with their resolved real targets."""
+
+        import socket as socket_module
+
+        opened: list[dict] = []
+        real_open = builtins.open
+        real_io_open = io_module.open
+
+        def guarded(module_label, file, *args, **kwargs):
+            if isinstance(file, (str, Path)):
+                requested = str(file)
+                try:
+                    resolved = str(Path(requested).resolve())
+                except OSError:
+                    resolved = requested
+                opened.append({"via": module_label, "requested": requested, "resolved": resolved})
+            return real_open(file, *args, **kwargs)
+
+        with (
+            patch("builtins.open", side_effect=lambda f, *a, **k: guarded("builtins", f, *a, **k)),
+            patch("io.open", side_effect=lambda f, *a, **k: guarded("io", f, *a, **k)),
+            patch.object(urllib.request, "urlopen", side_effect=AssertionError("network used")),
+            patch("socket.socket", side_effect=lambda *a, **k: (_ for _ in ()).throw(AssertionError("network used"))),
+        ):
+            yield opened
+
+    def _outside_reads(self, opened: list[dict], bundle_root: Path) -> list[dict]:
+        root_resolved = str(bundle_root.resolve()).casefold()
+        outside = []
+        for entry in opened:
+            resolved = str(Path(entry["resolved"]).resolve()).casefold()
+            if resolved != root_resolved and not resolved.startswith(root_resolved + os.sep):
+                outside.append(entry)
+        return outside
+
+    def test_junction_parent_directory_blocks_before_any_content_read(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = self._build_bundle(root, "frequency")
+            case_root = root / "junction-case"
+            case_root.mkdir()
+            bundle_case = case_root / "bundle"
+            shutil.copytree(Path(build["bundle_dir"]), bundle_case)
+            outside_evidence = case_root / "outside_evidence"
+            shutil.copytree(bundle_case / "evidence", outside_evidence)
+            junction = bundle_case / "evidence"
+            shutil.rmtree(junction)
+            self.assertEqual(
+                subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(junction), str(outside_evidence)],
+                    capture_output=True,
+                ).returncode,
+                0,
+            )
+            self.assertTrue(
+                bool(os.lstat(junction).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            )
+
+            with self._resolved_open_guard() as opened:
+                verification = verify_runtime_bundle(bundle_case / "bundle_manifest.json")
+            self.assertEqual(verification["status"], "blocked", verification["reasons"])
+            self.assertTrue(
+                any("reparse" in reason for reason in verification["reasons"]), verification["reasons"]
+            )
+            self.assertEqual(self._outside_reads(opened, bundle_case), [])
+            self.assertTrue(
+                all(
+                    check["check"] != "bundle_files_inventory" or check["status"] == "failed"
+                    for check in verification["checks"]
+                ),
+                verification["checks"],
+            )
+
+            with contextlib.redirect_stderr(io_module.StringIO()), contextlib.redirect_stdout(io_module.StringIO()):
+                with self.assertRaises(SystemExit) as cli_exit:
+                    main(
+                        [
+                            "runtime-bundle-verify",
+                            "--bundle-manifest",
+                            str(bundle_case / "bundle_manifest.json"),
+                        ]
+                    )
+            self.assertEqual(cli_exit.exception.code, 1)
+            subprocess.run(["cmd", "/c", "rmdir", str(junction)], capture_output=True)
+
+    def test_standalone_audit_with_bad_bundle_saves_structured_blocked_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = self._build_bundle(root, "frequency")
+            fixtures_path = self._write_fixtures(root)
+            session = run_snapshot_session(
+                None,
+                fixtures_path,
+                mode="replay",
+                output_root=root / "runtime" / "sessions",
+                bundle_manifest_path=build["bundle_manifest_path"],
+            )
+            self.assertEqual(session["status"], "ready")
+            run_dir = Path(session["prediction_run_dir"])
+
+            def make_missing(case_root: Path) -> Path:
+                return case_root / "nope" / "bundle_manifest.json"
+
+            def make_corrupt(case_root: Path) -> Path:
+                case_root.mkdir(parents=True, exist_ok=True)
+                target = case_root / "corrupt_bundle"
+                shutil.copytree(Path(build["bundle_dir"]), target)
+                (target / "bundle_manifest.json").write_text("{not-json", encoding="utf-8")
+                return target / "bundle_manifest.json"
+
+            def make_hash_wrong(case_root: Path) -> Path:
+                case_root.mkdir(parents=True, exist_ok=True)
+                target = case_root / "hash_wrong_bundle"
+                shutil.copytree(Path(build["bundle_dir"]), target)
+                run_md = target / "RUN.md"
+                run_md.write_text(run_md.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+                return target / "bundle_manifest.json"
+
+            def make_rejected_set(case_root: Path) -> Path:
+                case_root.mkdir(parents=True, exist_ok=True)
+                target = case_root / "rejected_set_bundle"
+                shutil.copytree(Path(build["bundle_dir"]), target)
+                (target / "unexpected.exe").write_bytes(b"MZ")
+
+                def mutate(payload):
+                    actual = file_sha256(target / "unexpected.exe")
+                    payload["files"].append({"path": "unexpected.exe", "bytes": 2, "sha256": actual})
+                    payload["size"]["payload_bytes"] = sum(entry["bytes"] for entry in payload["files"])
+                    payload["size"]["file_count"] = len(payload["files"])
+                    payload["size"]["actual_file_count"] = len(payload["files"]) + 1
+
+                self._rewrite_bundle_manifest(target, mutate)
+                return target / "bundle_manifest.json"
+
+            cases = {
+                "missing_manifest": make_missing,
+                "corrupt_manifest_json": make_corrupt,
+                "payload_hash_wrong": make_hash_wrong,
+                "payload_set_rejected": make_rejected_set,
+            }
+            for name, make_manifest in cases.items():
+                with self.subTest(case=name):
+                    case_root = root / "rework" / name
+                    case_root.mkdir(parents=True, exist_ok=True)
+                    output_root = case_root / "audits"
+                    bundle_manifest = make_manifest(case_root)
+                    # API: structured blocked result, never an exception.
+                    result = verify_snapshot_run(
+                        run_dir, output_root=output_root, bundle_manifest_path=bundle_manifest
+                    )
+                    self.assertEqual(result["status"], "blocked", result["reasons"])
+                    self.assertFalse(result["predictions_usable"])
+                    self.assertTrue(
+                        result["reasons"][0].startswith("bundle_verification_failed: ")
+                        and len(result["reasons"][0]) > len("bundle_verification_failed: "),
+                        result["reasons"],
+                    )
+                    audit_json = Path(result["prediction_audit_path"])
+                    audit_md = Path(result["prediction_audit_report_path"])
+                    self.assertTrue(audit_json.is_file(), name)
+                    self.assertTrue(audit_md.is_file(), name)
+                    payload = json.loads(audit_json.read_text(encoding="utf-8"))
+                    self.assertEqual(payload["stages"]["bundle_verify"], "failed")
+                    self.assertEqual(payload["stages"]["evidence_load"], "not_run")
+                    self.assertEqual(payload["stages"]["repredict"], "not_run")
+                    self.assertFalse(payload["predictions_usable"])
+                    self.assertEqual(payload["bundle"]["verification_status"], "blocked")
+                    self.assertIsNone(payload["bundle"]["validation_kind"])
+                    self.assertIsNone(payload["bundle"]["derived"])
+                    self.assertIsNone(payload["bundle"]["original"])
+                    self.assertEqual(
+                        payload["bundle"]["lineage_evidence"], "unavailable_bundle_verification_failed"
+                    )
+                    self.assertTrue(payload["bundle"]["verify_reasons"])
+                    self.assertEqual(payload["issue_evidence"]["record_status"], "unavailable")
+                    self.assertFalse(payload["issue_evidence"]["fresh_at_issue"])
+                    # CLI: exit 1 with the real bundle failure reason.
+                    stderr = io_module.StringIO()
+                    stdout = io_module.StringIO()
+                    with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+                        with self.assertRaises(SystemExit) as cli_exit:
+                            main(
+                                [
+                                    "snapshot-run-verify",
+                                    "--forecast-run", str(run_dir),
+                                    "--bundle-manifest", str(bundle_manifest),
+                                    "--output-root", str(case_root / "audits-cli"),
+                                ]
+                            )
+                    self.assertEqual(cli_exit.exception.code, 1, name)
+                    combined = stdout.getvalue() + stderr.getvalue()
+                    self.assertIn("blocked", combined)
+                    self.assertIn("bundle_verification_failed", combined)
+
+    def test_required_build_report_failure_blocks_delivery_but_keeps_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+            real_write = runtime_bundle_module._write_utf8_text
+
+            def failing_write(path, text):
+                if Path(path).name == "build_report.md":
+                    raise PermissionError("simulated required build report failure")
+                return real_write(path, text)
+
+            with patch.object(
+                runtime_bundle_module, "_write_utf8_text", side_effect=failing_write
+            ):
+                build = build_runtime_bundle(
+                    built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
+                )
+                self.assertEqual(build["status"], "blocked")
+                self.assertEqual(build["stages"]["finalize"], "failed")
+                self.assertIn("required_artifact_write_failed", build["reasons"][-1])
+                self.assertIn("build_report", build["reasons"][-1])
+                self.assertEqual(build["stages"]["self_verify"], "completed")
+                self.assertFalse(Path(build["build_report_path"]).exists())
+                stderr = io_module.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
+                    with self.assertRaises(SystemExit) as cli_exit:
+                        main(
+                            [
+                                "runtime-bundle-build",
+                                "--snapshot-manifest", str(built["snapshot_manifest_path"]),
+                                "--issue-audit", str(issue_path),
+                                "--output-root", str(root / "jobs-cli"),
+                            ]
+                        )
+                self.assertEqual(cli_exit.exception.code, 1)
+            job = json.loads(Path(build["build_job_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(job["status"], "blocked")
+            self.assertEqual(job["stages"]["finalize"], "failed")
+            self.assertIn("required_artifact_write_failed", job["reasons"][-1])
+            # The candidate bundle itself stays intact and verifiable; that does
+            # not upgrade the failed build delivery to ready.
+            self.assertTrue((Path(build["bundle_dir"]) / "bundle_manifest.json").is_file())
+            candidate = verify_runtime_bundle(Path(build["bundle_dir"]) / "bundle_manifest.json")
+            self.assertEqual(candidate["status"], "ready", candidate["reasons"])
+            self.assertNotEqual(build["status"], "ready")
+
+    def test_build_job_record_write_failure_raises_honestly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+            real_write_json = runtime_bundle_module.write_json
+
+            def failing_write_json(payload, path, *args, **kwargs):
+                if Path(str(path)).name == "build_job.json":
+                    raise PermissionError("simulated build job record failure")
+                return real_write_json(payload, path, *args, **kwargs)
+
+            with patch.object(
+                runtime_bundle_module, "write_json", side_effect=failing_write_json
+            ):
+                with self.assertRaises(OSError) as raised:
+                    build_runtime_bundle(
+                        built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
+                    )
+                self.assertIn("build job record", str(raised.exception))
+                self.assertIn("remain on disk", str(raised.exception))
+                stderr = io_module.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
+                    with self.assertRaises(SystemExit) as cli_exit:
+                        main(
+                            [
+                                "runtime-bundle-build",
+                                "--snapshot-manifest", str(built["snapshot_manifest_path"]),
+                                "--issue-audit", str(issue_path),
+                                "--output-root", str(root / "jobs-cli"),
+                            ]
+                        )
+                self.assertEqual(cli_exit.exception.code, 1)
+                self.assertIn("build job record", stderr.getvalue())
+
+    def test_required_bundle_manifest_hash_read_failure_blocks_delivery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+            real_sha = runtime_bundle_module.file_sha256
+
+            def failing_sha(path, *args, **kwargs):
+                if Path(str(path)).name == "bundle_manifest.json":
+                    raise PermissionError("simulated required artifact hash read failure")
+                return real_sha(path, *args, **kwargs)
+
+            with patch.object(runtime_bundle_module, "file_sha256", side_effect=failing_sha):
+                build = build_runtime_bundle(
+                    built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
+                )
+            self.assertEqual(build["status"], "blocked")
+            self.assertEqual(build["stages"]["finalize"], "failed")
+            self.assertIn("required_artifact_write_failed", build["reasons"][-1])
+            self.assertIn("bundle_manifest_sha256", build["reasons"][-1])
+            self.assertIsNone(build["bundle_manifest_sha256"])
+            job = json.loads(Path(build["build_job_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(job["status"], "blocked")
+            self.assertIsNone(job["bundle_manifest_sha256"])
+
+    def _sync_catalog(self, bundle_root: Path, mutate_files) -> None:
+        def mutate(payload):
+            mutate_files(payload)
+            payload["size"]["payload_bytes"] = sum(entry["bytes"] for entry in payload["files"])
+            payload["size"]["file_count"] = len(payload["files"])
+            payload["size"]["actual_file_count"] = len(payload["files"]) + 1
+
+        self._rewrite_bundle_manifest(bundle_root, mutate)
+
+    def test_fixed_v1_payload_set_and_recorded_bytes_are_enforced(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = self._build_bundle(root, "frequency")
+            control_root = Path(build["bundle_dir"])
+            control = verify_runtime_bundle(control_root / "bundle_manifest.json")
+            self.assertEqual(control["status"], "ready", control["reasons"])
+            self.assertEqual(control["file_count"], 7)
+            self.assertEqual(control["actual_file_count"], 8)
+            snapshot_id = build["snapshot_id"]
+            expected_payload = {
+                "evidence/original_snapshot_manifest.json",
+                "evidence/issue_audit.json",
+                "team_index.json",
+                "RUN.md",
+                f"snapshot/{snapshot_id}/snapshot_manifest.json",
+                f"snapshot/{snapshot_id}/model_states.json",
+                f"snapshot/{snapshot_id}/snapshot_report.md",
+            }
+            self.assertEqual(
+                {entry["path"] for entry in json.loads(
+                    (control_root / "bundle_manifest.json").read_text(encoding="utf-8")
+                )["files"]},
+                expected_payload,
+            )
+
+            cases = {}
+            # Listed extra executable (synthetic sentinel bytes, never executed).
+            case = root / "listed_executable"
+            shutil.copytree(control_root, case / "bundle")
+            (case / "bundle" / "unexpected.exe").write_bytes(b"MZ")
+
+            def add_exe(payload, case=case):
+                payload["files"].append(
+                    {"path": "unexpected.exe", "bytes": 2, "sha256": hashlib.sha256(b"MZ").hexdigest()}
+                )
+
+            cases["listed_executable"] = (case, add_exe)
+            # Listed extra raw-results CSV.
+            case = root / "listed_raw_csv"
+            shutil.copytree(control_root, case / "bundle")
+            (case / "bundle" / "unexpected_raw.csv").write_bytes(b"h,d\n")
+
+            def add_csv(payload, case=case):
+                payload["files"].append(
+                    {
+                        "path": "unexpected_raw.csv",
+                        "bytes": 4,
+                        "sha256": hashlib.sha256(b"h,d\n").hexdigest(),
+                    }
+                )
+
+            cases["listed_raw_csv"] = (case, add_csv)
+            # Required RUN.md removed on disk and dropped from the catalog.
+            case = root / "missing_required_RUN"
+            shutil.copytree(control_root, case / "bundle")
+            (case / "bundle" / "RUN.md").unlink()
+
+            def drop_run(payload):
+                payload["files"] = [entry for entry in payload["files"] if entry["path"] != "RUN.md"]
+
+            cases["missing_required_RUN"] = (case, drop_run)
+            # Same bytes, but the recorded size lies (0) with the totals synced.
+            case = root / "false_payload_size"
+            shutil.copytree(control_root, case / "bundle")
+
+            def fake_size(payload):
+                for entry in payload["files"]:
+                    if entry["path"] == "RUN.md":
+                        entry["bytes"] = 0
+
+            cases["false_payload_size"] = (case, fake_size)
+
+            for name, (case, mutate) in cases.items():
+                with self.subTest(case=name):
+                    bundle_case = case / "bundle"
+                    self._sync_catalog(bundle_case, mutate)
+                    verification = verify_runtime_bundle(bundle_case / "bundle_manifest.json")
+                    self.assertEqual(verification["status"], "blocked", verification["reasons"])
+                    self.assertTrue(
+                        any(
+                            marker in verification["reasons"][0]
+                            for marker in ("fixed v1 payload set", "required bundle payload is missing",
+                                           "recorded byte size does not match")
+                        ),
+                        verification["reasons"],
+                    )
+                    stderr = io_module.StringIO()
+                    with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
+                        with self.assertRaises(SystemExit) as cli_exit:
+                            main(
+                                [
+                                    "runtime-bundle-verify",
+                                    "--bundle-manifest",
+                                    str(bundle_case / "bundle_manifest.json"),
+                                ]
+                            )
+                    self.assertEqual(cli_exit.exception.code, 1, name)
+
+    def test_normalization_colliding_paths_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = self._build_bundle(root, "frequency")
+            bundle_case = root / "collide" / "bundle"
+            bundle_case.parent.mkdir(parents=True)
+            shutil.copytree(Path(build["bundle_dir"]), bundle_case)
+
+            def mutate(payload):
+                # A second listing that collides with RUN.md under Windows
+                # normalization (same file, different case in the catalog).
+                run_entry = next(entry for entry in payload["files"] if entry["path"] == "RUN.md")
+                payload["files"].append(dict(run_entry, path="run.md"))
+                payload["size"]["payload_bytes"] = sum(entry["bytes"] for entry in payload["files"])
+                payload["size"]["file_count"] = len(payload["files"])
+                payload["size"]["actual_file_count"] = len(payload["files"]) + 1
+
+            self._rewrite_bundle_manifest(bundle_case, mutate)
+            verification = verify_runtime_bundle(bundle_case / "bundle_manifest.json")
+            self.assertEqual(verification["status"], "blocked", verification["reasons"])
+            self.assertTrue(
+                any("normalization" in reason for reason in verification["reasons"]),
+                verification["reasons"],
+            )
 
 
 if __name__ == "__main__":

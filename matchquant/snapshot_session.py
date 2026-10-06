@@ -558,8 +558,12 @@ def run_snapshot_session(
 
     bundle_unchanged: bool | None = None
     if bundle_verification is not None and inputs_unchanged:
+        from .runtime_bundle_validation import fixed_bundle_payload_paths
+
         bundle_ok, bundle_errors, _recorded = check_bundle_payload_integrity(
-            Path(bundle_verification["bundle_root"]), bundle_verification["files"]
+            Path(bundle_verification["bundle_root"]),
+            bundle_verification["files"],
+            expected_payload_paths=fixed_bundle_payload_paths(bundle_verification["snapshot_id"]),
         )
         bundle_unchanged = bundle_ok
         if not bundle_ok:

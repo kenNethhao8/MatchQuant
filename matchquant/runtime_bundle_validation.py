@@ -43,6 +43,29 @@ from .team_index import TEAM_INDEX_SCHEMA_VERSION, verify_team_index
 RUNTIME_BUNDLE_SCHEMA_VERSION = "baseline-runtime-bundle-v1"
 BUNDLE_LINEAGE_VALIDATION_KIND = "bundle_original_issue_via_derived_manifest_lineage"
 RUNTIME_BUNDLE_SIZE_LIMIT_BYTES = 5 * 1024 * 1024
+BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
+
+
+def fixed_bundle_payload_paths(snapshot_id: str) -> frozenset[str]:
+    """The exact first-version payload set of ``baseline-runtime-bundle-v1``.
+
+    The schema has no extension slots and no selection_summary: exactly these
+    seven payload files plus ``bundle_manifest.json`` (eight actual files) are
+    allowed. Extra listed files and removed required files are rejected even
+    when the catalog, count, and sizes were synced.
+    """
+
+    return frozenset(
+        {
+            "evidence/original_snapshot_manifest.json",
+            "evidence/issue_audit.json",
+            "team_index.json",
+            "RUN.md",
+            f"snapshot/{snapshot_id}/snapshot_manifest.json",
+            f"snapshot/{snapshot_id}/model_states.json",
+            f"snapshot/{snapshot_id}/snapshot_report.md",
+        }
+    )
 
 _BUNDLE_MANIFEST_KEYS = (
     "schema_version",
@@ -94,7 +117,7 @@ _BUNDLE_ISSUE_KEYS = (
 )
 _BUNDLE_MANIFEST_COPY_KEYS = ("relative_path", "file_sha256", "content_sha256")
 _BUNDLE_TEAM_INDEX_KEYS = ("relative_path", "file_sha256", "schema_version")
-_BUNDLE_SIZE_KEYS = ("payload_bytes", "file_count", "limit_bytes", "includes_bundle_manifest")
+_BUNDLE_SIZE_KEYS = ("payload_bytes", "file_count", "actual_file_count", "limit_bytes", "includes_bundle_manifest")
 _BUNDLE_DIFFS_KEYS = ("allowed_leaf_paths", "observed")
 _BUNDLE_FILE_ENTRY_KEYS = ("path", "bytes", "sha256")
 _BUNDLE_DIFF_ENTRY_KEYS = ("field", "original", "derived", "change")
@@ -117,7 +140,6 @@ FIXED_DERIVED_LEAF_VALUES = {
     "outputs.model_states": "model_states.json",
     "outputs.snapshot_report": "snapshot_report.md",
 }
-_BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
 _ORIGINAL_OUTPUTS_KEYS = {"snapshot_dir", "snapshot_manifest", "model_states", "snapshot_report"}
 _STATE_BLOCK_KEYS = ("path", "sha256", "schema_version")
 _HISTORY_MANIFEST_SCHEMAS = {"m2-processed-manifest-v1", "m2.1-processed-manifest-v1"}
@@ -197,20 +219,64 @@ def _actual_bundle_files(bundle_root: Path, errors: list[str]) -> set[str]:
     return actual
 
 
+def _precheck_bundle_payload_path(bundle_root: Path, relative: str, errors: list[str]) -> bool:
+    """Path precheck with no content reads: every parent directory inside the
+    bundle, the leaf object, and the resolved real target must be safe."""
+
+    current = bundle_root
+    parts = relative.split("/")
+    for part in parts[:-1]:
+        current = current / part
+        if _is_reparse_point(current):
+            errors.append(
+                f"bundle payload parent directory must not be a symlink/junction/reparse object: {current}"
+            )
+            return False
+        if not current.is_dir():
+            errors.append(f"bundle payload parent directory is missing or not a directory: {current}")
+            return False
+    leaf = bundle_root / Path(*parts)
+    if _is_reparse_point(leaf):
+        errors.append(f"payload file must not be a symlink/junction/reparse object: {relative}")
+        return False
+    if not leaf.is_file():
+        errors.append(f"listed bundle file is missing or not a regular file: {relative}")
+        return False
+    try:
+        resolved_leaf = leaf.resolve()
+        resolved_root = bundle_root.resolve()
+    except OSError as exc:
+        errors.append(f"payload path could not be resolved: {relative}: {exc}")
+        return False
+    if resolved_leaf != resolved_root and resolved_root not in resolved_leaf.parents:
+        errors.append(
+            f"payload resolves outside the bundle root: {relative} -> {resolved_leaf}"
+        )
+        return False
+    return True
+
+
 def check_bundle_payload_integrity(
     bundle_root: Path,
     files: list[dict[str, Any]],
     *,
-    bundle_manifest_name: str = _BUNDLE_MANIFEST_NAME,
+    bundle_manifest_name: str = BUNDLE_MANIFEST_NAME,
+    expected_payload_paths: frozenset[str] | None = None,
 ) -> tuple[bool, list[str], set[str]]:
-    """Re-hash every recorded payload file and detect missing/extra/reparse files.
+    """Path precheck, actual-size/hash verification, and extras detection.
 
-    Read-only; used both by ``verify_runtime_bundle`` and by the bundle-mode
-    session/audit final checks that observe the whole package unchanged.
+    Phase A validates path texts, Windows-normalization collisions, the fixed
+    payload set when given, and every parent-directory chain plus the resolved
+    containment — all without reading any payload content. If phase A reports
+    any error the function returns immediately and no payload file is opened;
+    hash/JSON/state content reads may only run afterwards. Phase B re-stats and
+    hashes each recorded file; phase C enumerates unlisted files. Shared by the
+    verify entry and the session/audit start-end integrity checks.
     """
 
     errors: list[str] = []
     recorded: dict[str, dict[str, Any]] = {}
+    seen_normcase: set[str] = set()
     for entry in files:
         if not isinstance(entry, Mapping):
             errors.append("bundle files entries must be JSON objects")
@@ -220,21 +286,42 @@ def check_bundle_payload_integrity(
         except DataValidationError as exc:
             errors.append(str(exc))
             continue
-        if path_text in recorded:
-            errors.append(f"duplicate bundle files entry: {path_text}")
+        normalized = os.path.normcase(path_text)
+        if normalized in seen_normcase:
+            errors.append(
+                f"duplicate bundle files entry under Windows normalization: {path_text}"
+            )
             continue
+        seen_normcase.add(normalized)
         recorded[path_text] = dict(entry)
+    if expected_payload_paths is not None:
+        recorded_paths = set(recorded)
+        for missing in sorted(expected_payload_paths - recorded_paths):
+            errors.append(f"required bundle payload is missing from the manifest: {missing}")
+        for unexpected in sorted(recorded_paths - expected_payload_paths):
+            errors.append(f"bundle manifest lists a file outside the fixed v1 payload set: {unexpected}")
     if errors:
         return False, errors, set()
 
+    # Phase A: path/parent/containment precheck for every entry; no content reads.
+    for path_text in sorted(recorded):
+        _precheck_bundle_payload_path(bundle_root, path_text, errors)
+    if errors:
+        return False, errors, set(recorded)
+
+    # Phase B: actual size and hash (content reads allowed only after phase A).
     for path_text, entry in sorted(recorded.items()):
         candidate = bundle_root / Path(*path_text.split("/"))
-        if _is_reparse_point(candidate):
-            errors.append(f"payload file must not be a symlink/junction/reparse object: {path_text}")
+        try:
+            actual_size = candidate.stat().st_size
+        except OSError as exc:
+            errors.append(f"listed bundle file could not be stat'ed: {path_text}: {exc}")
             continue
-        if not candidate.is_file():
-            errors.append(f"listed bundle file is missing: {path_text}")
-            continue
+        if entry.get("bytes") != actual_size:
+            errors.append(
+                f"recorded byte size does not match the actual file: {path_text} "
+                f"(recorded {entry.get('bytes')}, actual {actual_size})"
+            )
         try:
             actual_hash = file_sha256(candidate)
         except OSError as exc:
@@ -245,7 +332,10 @@ def check_bundle_payload_integrity(
             continue
         if str(entry["sha256"]).casefold() != actual_hash.casefold():
             errors.append(f"bundle file hash does not match the recorded hash: {path_text}")
+    if errors:
+        return False, errors, set(recorded)
 
+    # Phase C: unlisted files and reparse directories inside the bundle.
     actual = _actual_bundle_files(bundle_root, errors)
     expected = set(recorded) | {bundle_manifest_name}
     for missing in sorted(expected - actual):
@@ -480,6 +570,7 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
             "model": None,
             "checks": checks,
             "file_count": None,
+            "actual_file_count": None,
             "total_bytes": None,
             "limitations": [
                 "verify 是只读检查：不写入、不自动解压、不发布；blocked 表示该包不能当作可用运行包。",
@@ -626,22 +717,46 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
     files: list[dict[str, Any]] = payload["files"]
     try:
         payload_bytes = 0
+        seen_normcase: set[str] = set()
         for entry in files:
             _require_exact_keys(entry, _BUNDLE_FILE_ENTRY_KEYS, "bundle files entry")
-            validated_bundle_relative_path(entry.get("path"), "bundle files entry path")
+            path_text = validated_bundle_relative_path(entry.get("path"), "bundle files entry path")
+            normalized = os.path.normcase(path_text)
+            if normalized in seen_normcase:
+                raise DataValidationError(
+                    f"bundle files contain duplicate paths under Windows normalization: {path_text}"
+                )
+            seen_normcase.add(normalized)
             if isinstance(entry.get("bytes"), bool) or not isinstance(entry.get("bytes"), int) or entry["bytes"] < 0:
                 raise DataValidationError(f"bundle files entry bytes must be a non-negative integer: {entry.get('path')!r}")
             payload_bytes += int(entry["bytes"])
+        expected_payload = fixed_bundle_payload_paths(snapshot_id)
+        listed_paths = {entry["path"] for entry in files}
+        for missing in sorted(expected_payload - listed_paths):
+            raise DataValidationError(
+                f"required bundle payload is missing from the manifest: {missing}"
+            )
+        for unexpected in sorted(listed_paths - expected_payload):
+            raise DataValidationError(
+                f"bundle manifest lists a file outside the fixed v1 payload set: {unexpected}"
+            )
         if size_block.get("file_count") != len(files) or size_block.get("payload_bytes") != payload_bytes:
             raise DataValidationError(
                 "bundle manifest size record does not match the files list (file count or payload bytes)"
             )
+        if size_block.get("actual_file_count") != len(files) + 1:
+            raise DataValidationError(
+                "bundle manifest actual_file_count must count the payload files plus bundle_manifest.json "
+                f"({len(files) + 1})"
+            )
     except (DataValidationError, TypeError, ValueError, KeyError) as exc:
         return blocked("bundle_files_list", str(exc))
-    record("bundle_files_list", True, f"{len(files)} payload files, {payload_bytes} bytes")
+    record("bundle_files_list", True, f"{len(files)} payload files ({len(files) + 1} actual files including the manifest), {payload_bytes} bytes")
 
     try:
-        ok, integrity_errors, recorded_paths = check_bundle_payload_integrity(bundle_root, files)
+        ok, integrity_errors, recorded_paths = check_bundle_payload_integrity(
+            bundle_root, files, expected_payload_paths=fixed_bundle_payload_paths(snapshot_id)
+        )
         if not ok:
             raise DataValidationError("; ".join(integrity_errors))
     except (DataValidationError, OSError) as exc:
@@ -649,7 +764,8 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
     record(
         "bundle_files_inventory",
         True,
-        "every listed file present, hashed, and a regular non-reparse file; no unlisted files",
+        "path precheck passed for every payload before any content read; actual sizes and hashes match; "
+        "no unlisted files",
     )
 
     original_copy_path = bundle_root / Path(*copy_block["relative_path"].split("/"))
@@ -850,7 +966,7 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
 
     try:
         actual_total = 0
-        for relative in sorted(recorded_paths | {_BUNDLE_MANIFEST_NAME}):
+        for relative in sorted(recorded_paths | {BUNDLE_MANIFEST_NAME}):
             candidate = bundle_root / Path(*relative.split("/"))
             if candidate.is_file():
                 actual_total += candidate.stat().st_size
@@ -939,6 +1055,7 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
         "files": [dict(entry) for entry in files],
         "checks": checks,
         "file_count": len(files),
+        "actual_file_count": len(files) + 1,
         "total_bytes": actual_total,
         "limitations": [
             "verify 只读完成：不写入、不自动解压 ZIP、不发布；包体未签名，hash 不构成来源认证。",
@@ -949,9 +1066,11 @@ def verify_runtime_bundle(bundle_manifest_path: str | Path) -> dict[str, Any]:
 __all__ = [
     "ALLOWED_MANIFEST_DIFF_FIELDS",
     "BUNDLE_LINEAGE_VALIDATION_KIND",
+    "BUNDLE_MANIFEST_NAME",
     "RUNTIME_BUNDLE_SCHEMA_VERSION",
     "RUNTIME_BUNDLE_SIZE_LIMIT_BYTES",
     "check_bundle_payload_integrity",
+    "fixed_bundle_payload_paths",
     "manifest_leaf_diff",
     "validated_bundle_relative_path",
     "verify_runtime_bundle",

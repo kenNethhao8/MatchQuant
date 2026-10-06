@@ -34,11 +34,13 @@ from .prediction_evidence import load_prediction_evidence
 from .runtime_bundle_validation import (
     BUNDLE_LINEAGE_VALIDATION_KIND,
     check_bundle_payload_integrity,
+    fixed_bundle_payload_paths,
     verify_runtime_bundle,
 )
 from .schema import DataValidationError
 from .settlement_validation import _read_prediction_csv
 from .snapshot_audit_support import (
+    ACTIVE_LINK_STATUS,
     AUDIT_DIR_PREFIX,
     AUDIT_SCHEMA_VERSION,
     EXPECTED_STAGE_ERRORS,
@@ -141,6 +143,55 @@ def _bundle_audit_block(bundle_context: Mapping[str, Any] | None) -> dict[str, A
         "state_file_sha256": bundle_context["derived"]["state_sha256"],
         "fresh_at_issue": bool(bundle_context["issue_validation"]["fresh_at_issue"]),
         "active_link_status": bundle_context["issue_validation"]["active_link_status"],
+    }
+
+
+def _bundle_failure_block(failed_verification: Mapping[str, Any]) -> dict[str, Any]:
+    """Diagnostic bundle block for a failed verification; never a success lineage.
+
+    Known fields are carried over as-is (paths, the verifier's own checks and
+    reasons); unknown lineage facts stay null/unavailable instead of being
+    fabricated into a fresh bridge or a successful derived binding.
+    """
+
+    return {
+        "bundle_manifest_path": failed_verification.get("bundle_manifest_path"),
+        "bundle_manifest_file_sha256": failed_verification.get("bundle_manifest_file_sha256"),
+        "bundle_root": failed_verification.get("bundle_root"),
+        "verification_status": failed_verification.get("status"),
+        "verify_reasons": list(failed_verification.get("reasons") or []),
+        "verify_checks": list(failed_verification.get("checks") or []),
+        "validation_kind": None,
+        "snapshot_id": failed_verification.get("snapshot_id"),
+        "original": None,
+        "derived": None,
+        "state_file_sha256": None,
+        "fresh_at_issue": False,
+        "active_link_status": ACTIVE_LINK_STATUS,
+        "lineage_evidence": "unavailable_bundle_verification_failed",
+    }
+
+
+def _unavailable_bundle_issue_block() -> dict[str, Any]:
+    return {
+        "provided": True,
+        "source": "bundle_internal",
+        "path": None,
+        "sha256": None,
+        "schema_version": None,
+        "record_status": "unavailable",
+        "record_generated_at": None,
+        "record_reasons": [],
+        "comparison_flags": None,
+        "recomputed_flags": None,
+        "fresh_at_issue": False,
+        "active_link_status": ACTIVE_LINK_STATUS,
+        "pointer_status": None,
+        "pointer_dataset_version": None,
+        "source_access": "unavailable_bundle_verification_failed",
+        "limitations": [
+            "bundle 验证失败；包内发行证据本次不可用，不伪造 fresh、不伪造成功的派生桥。",
+        ],
     }
 
 
@@ -591,7 +642,9 @@ def execute_snapshot_run_audit(
     if bundle_context is not None:
         stages["bundle_files_unchanged"] = "not_run"
         bundle_ok, bundle_errors, _recorded = check_bundle_payload_integrity(
-            Path(bundle_context["bundle_root"]), bundle_context["files"]
+            Path(bundle_context["bundle_root"]),
+            bundle_context["files"],
+            expected_payload_paths=fixed_bundle_payload_paths(bundle_context["snapshot_id"]),
         )
         if not bundle_ok:
             stages["bundle_files_unchanged"] = "failed"
@@ -758,9 +811,16 @@ def verify_snapshot_run(
                 ],
                 run_block={"run_dir": str(run_dir_path)},
                 snapshot_block=None,
-                issue_block=None,
-                inputs_block={},
-                bundle_block=_bundle_audit_block(bundle_verification),
+                issue_block=_unavailable_bundle_issue_block(),
+                inputs_block={
+                    "bundle_manifest": {
+                        "path": str(bundle_file),
+                        "sha256": bundle_verification.get("bundle_manifest_file_sha256"),
+                        "verify_status": bundle_verification.get("status"),
+                        "verify_reasons": list(bundle_verification.get("reasons") or []),
+                    }
+                },
+                bundle_block=_bundle_failure_block(bundle_verification),
             )
             return {
                 "status": audit["status"],

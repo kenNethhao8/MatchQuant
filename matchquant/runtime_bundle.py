@@ -24,8 +24,10 @@ from .runtime_bundle_validation import (
     ALLOWED_ADDED_FIELDS,
     ALLOWED_MANIFEST_DIFF_FIELDS,
     BUNDLE_LINEAGE_VALIDATION_KIND,
+    BUNDLE_MANIFEST_NAME,
     RUNTIME_BUNDLE_SCHEMA_VERSION,
     RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
+    fixed_bundle_payload_paths,
     manifest_leaf_diff,
     verify_runtime_bundle,
 )
@@ -50,6 +52,10 @@ _BASE_LIMITATIONS = (
     "fresh_at_issue 只表示原发行记录经派生桥关联，不证明当前覆盖。",
     "包体没有签名来源认证；hash 证明本次输入一致性，不能发现所有字段同步伪造的包体。",
 )
+
+
+def _write_utf8_text(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
 
 
 def _reject_source_root_output(output_root: Path) -> None:
@@ -184,6 +190,7 @@ def build_runtime_bundle(
         "issue": None,
         "manifest_field_diffs": None,
         "file_count": None,
+        "actual_file_count": None,
         "payload_bytes": None,
         "total_bytes": None,
         "limit_bytes": RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
@@ -195,41 +202,31 @@ def build_runtime_bundle(
     }
 
     def finish() -> dict[str, Any]:
+        """Persist the final delivery state; report/job/hash failures decide the status.
+
+        The build report, the bundle-manifest hash, and the job record are the
+        required build artifacts. If any of them fails while the job directory is
+        still writable, the persisted delivery is blocked (finalize=failed,
+        required_artifact_write_failed) even when the candidate bundle itself is
+        complete; the job JSON is written last with the final status. A failing
+        job write raises an honest expected IO error instead of pretending a
+        record exists.
+        """
+
+        delivery_errors: list[str] = []
         if Path(result["bundle_manifest_path"]).is_file():
-            result["bundle_manifest_sha256"] = file_sha256(result["bundle_manifest_path"])
-        total = sum(entry.stat().st_size for entry in bundle_dir.rglob("*") if entry.is_file())
-        result["total_bytes"] = total
-        write_json(
-            {
-                "schema_version": RUNTIME_BUNDLE_SCHEMA_VERSION,
-                "command": result["command"],
-                "generated_at": generated_at,
-                "kind": "runtime_bundle_build_job",
-                "status": result["status"],
-                "reasons": result["reasons"],
-                "stages": stages,
-                "inputs": {
-                    "snapshot_manifest": {"path": str(snapshot_file), "sha256": None},
-                    "issue_audit": {"path": str(issue_file), "sha256": None},
-                },
-                "bundle_dir": str(bundle_dir),
-                "bundle_manifest_path": result["bundle_manifest_path"],
-                "bundle_manifest_sha256": result["bundle_manifest_sha256"],
-                "snapshot_id": result["snapshot_id"],
-                "original": result["original"],
-                "derived": result["derived"],
-                "issue": result["issue"],
-                "manifest_field_diffs": result["manifest_field_diffs"],
-                "bundle_files": result["manifest"].get("files") if isinstance(result["manifest"], dict) else None,
-                "file_count": result["file_count"],
-                "payload_bytes": result["payload_bytes"],
-                "total_bytes": total,
-                "limit_bytes": RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
-                "size_note": "total_bytes 为解压后包内全部实际文件（含 bundle_manifest.json）之和；超限即 blocked。",
-                "limitations": result["limitations"],
-            },
-            job_json_path,
-        )
+            try:
+                result["bundle_manifest_sha256"] = file_sha256(result["bundle_manifest_path"])
+            except OSError as exc:
+                result["bundle_manifest_sha256"] = None
+                delivery_errors.append(f"bundle_manifest_sha256: {exc}")
+        try:
+            total = sum(entry.stat().st_size for entry in bundle_dir.rglob("*") if entry.is_file())
+            result["total_bytes"] = total
+        except OSError as exc:
+            total = None
+            delivery_errors.append(f"bundle_size_inventory: {exc}")
+
         status_text = "blocked" if result["status"] == "blocked" else "ready"
         lines = [
             "# MatchQuant runtime bundle 构建报告",
@@ -238,8 +235,10 @@ def build_runtime_bundle(
             f"- 构建目录：`{job_dir}`",
             f"- 包目录：`{bundle_dir}`",
             f"- snapshot_id：`{result['snapshot_id']}`",
-            f"- 包内文件数：{result['file_count']}；载荷字节 {result['payload_bytes']}；"
-            f"解压总字节（含清单）{total}（上限 {RUNTIME_BUNDLE_SIZE_LIMIT_BYTES}）",
+            f"- 包内载荷文件数：{result['file_count']}（实际文件数含 bundle_manifest.json 为 "
+            f"{(result['file_count'] + 1) if result['file_count'] is not None else None}）；"
+            f"载荷字节 {result['payload_bytes']}；解压总字节（含清单）{total}"
+            f"（上限 {RUNTIME_BUNDLE_SIZE_LIMIT_BYTES}）",
             "",
             "## 阶段",
             "",
@@ -256,7 +255,62 @@ def build_runtime_bundle(
                 "",
             ]
         )
-        report_path.write_text("\n".join(lines), encoding="utf-8")
+        try:
+            _write_utf8_text(report_path, "\n".join(lines))
+        except OSError as exc:
+            delivery_errors.append(f"build_report: {exc}")
+
+        if delivery_errors:
+            result["output_write_errors"] = delivery_errors
+            stages["finalize"] = "failed"
+            result["reasons"] = list(result["reasons"]) + [
+                "required_artifact_write_failed: " + "; ".join(delivery_errors)
+            ]
+            if result["status"] == "ready":
+                result["status"] = "blocked"
+                result["limitations"] = list(result["limitations"]) + [
+                    "工程阶段与候选包按实际保留（独立 verify 仍可描述其工程完整性）；"
+                    "但必需构建产物持久化失败，交付状态为 blocked，不能当作 ready。"
+                ]
+
+        job_payload = {
+            "schema_version": RUNTIME_BUNDLE_SCHEMA_VERSION,
+            "command": result["command"],
+            "generated_at": generated_at,
+            "kind": "runtime_bundle_build_job",
+            "status": result["status"],
+            "reasons": result["reasons"],
+            "stages": stages,
+            "inputs": {
+                "snapshot_manifest": {"path": str(snapshot_file), "sha256": None},
+                "issue_audit": {"path": str(issue_file), "sha256": None},
+            },
+            "bundle_dir": str(bundle_dir),
+            "bundle_manifest_path": result["bundle_manifest_path"],
+            "bundle_manifest_sha256": result["bundle_manifest_sha256"],
+            "snapshot_id": result["snapshot_id"],
+            "original": result["original"],
+            "derived": result["derived"],
+            "issue": result["issue"],
+            "manifest_field_diffs": result["manifest_field_diffs"],
+            "bundle_files": result["manifest"].get("files") if isinstance(result["manifest"], dict) else None,
+            "file_count": result["file_count"],
+            "payload_bytes": result["payload_bytes"],
+            "actual_file_count": (result["file_count"] + 1) if result["file_count"] is not None else None,
+            "total_bytes": total,
+            "limit_bytes": RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
+            "size_note": "total_bytes 为解压后包内全部实际文件（含 bundle_manifest.json）之和；超限即 blocked。",
+            "output_write_errors": result.get("output_write_errors", []),
+            "limitations": result["limitations"],
+        }
+        try:
+            write_json(job_payload, job_json_path)
+        except OSError as exc:
+            raise OSError(
+                f"could not persist the runtime bundle build job record '{job_json_path}': {exc}; "
+                f"the build directory {job_dir} and any completed bundle artifacts remain on disk, "
+                "but no build job record could be written"
+            ) from exc
         return result
 
     def fail(stage: str, reason: str) -> dict[str, Any]:
@@ -387,6 +441,14 @@ def build_runtime_bundle(
         }
 
         files = _inventory_bundle_files(bundle_dir)
+        expected_payload = fixed_bundle_payload_paths(snapshot_id)
+        produced_paths = {entry["path"] for entry in files}
+        if produced_paths != set(expected_payload):
+            raise DataValidationError(
+                "the assembled bundle does not match the fixed v1 payload set: "
+                f"missing={sorted(set(expected_payload) - produced_paths)} "
+                f"unexpected={sorted(produced_paths - set(expected_payload))}"
+            )
         bundle_manifest_payload = {
             "schema_version": RUNTIME_BUNDLE_SCHEMA_VERSION,
             "command": "matchquant runtime-bundle-build",
@@ -418,12 +480,14 @@ def build_runtime_bundle(
             "size": {
                 "payload_bytes": sum(entry["bytes"] for entry in files),
                 "file_count": len(files),
+                "actual_file_count": len(files) + 1,
                 "limit_bytes": RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
                 "includes_bundle_manifest": False,
             },
             "limitations": list(_BASE_LIMITATIONS),
         }
         result["file_count"] = len(files)
+        result["actual_file_count"] = len(files) + 1
         result["payload_bytes"] = sum(entry["bytes"] for entry in files)
         # The bundle manifest is the last payload write; an unfinished package is
         # never marked usable, and a failed write keeps the build blocked.
