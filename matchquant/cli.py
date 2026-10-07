@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import importlib.resources
 import json
 import sys
 from pathlib import Path
@@ -11,6 +13,7 @@ from typing import Any
 import pandas as pd
 
 from .backtest import run_models
+from .demo_export import export_synthetic_demo
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
 from .epl_fixtures import prepare_epl_fixtures
 from .epl_local_stage import stage_local_epl_source
@@ -32,13 +35,44 @@ from .runtime_bundle_validation import verify_runtime_bundle
 from .snapshot_run_verify import verify_snapshot_run
 from .snapshot_session import run_snapshot_session
 
-DEFAULT_M3_CANDIDATE_CONFIG = Path(__file__).resolve().parent.parent / "examples" / "m3_candidates.json"
+
+def default_m3_candidate_config() -> Path:
+    """Path of the packaged default M3 candidate configuration.
+
+    The resource ships inside the wheel (``matchquant/resources/``), so the
+    default also works from a real install outside the source checkout; an
+    explicit ``--candidate-config`` keeps its old semantics and overrides it.
+    """
+
+    resource = importlib.resources.files("matchquant") / "resources" / "m3_candidates.json"
+    with importlib.resources.as_file(resource) as path:
+        return Path(path)
+
+
+def _version_text() -> str:
+    try:
+        package_version = importlib.metadata.version("matchquant")
+    except importlib.metadata.PackageNotFoundError:
+        package_version = "0.0.0+uninstalled"
+    return (
+        f"matchquant {package_version} (baseline-v0.1 research build; research software, "
+        "not a live prediction product)"
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="matchquant", description="Reproducible football 1X2 research engine")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=_version_text(),
+        help="show the installed package version (metadata-driven) and the baseline-v0.1 research profile, then exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    run = subparsers.add_parser("run", help="run an online walk-forward backtest")
+    run = subparsers.add_parser(
+        "run",
+        help="run an offline walk-forward backtest (online means batch-by-batch model-state updating, not the network)",
+    )
     run.add_argument("--config", type=Path, help="optional JSON configuration")
     run.add_argument("--input", type=Path, help="canonical match CSV")
     run.add_argument("--test-start", help="first test date/time; date-only starts are calendar-day aligned")
@@ -46,9 +80,18 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--model", choices=[*MODEL_NAMES, "all"], help="model or all three")
     run.add_argument("--season-mode", choices=["carry", "reset"], help="carry or reset online state across seasons")
     run.add_argument("--output-dir", type=Path, help="directory for predictions, metrics, and run config")
-    select = subparsers.add_parser("select", help="M3 strict chronological model selection and calibration diagnostics")
+    select = subparsers.add_parser(
+        "select",
+        help="M3 strict chronological model selection with calibration diagnostics (diagnostics only, not calibrated probabilities)",
+    )
     select.add_argument("--input", type=Path, required=True, help="local canonical match CSV")
-    select.add_argument("--candidate-config", "--candidates", type=Path, default=DEFAULT_M3_CANDIDATE_CONFIG)
+    select.add_argument(
+        "--candidate-config",
+        "--candidates",
+        type=Path,
+        default=default_m3_candidate_config(),
+        help="candidate configuration JSON (default: the packaged m3_candidates.json resource)",
+    )
     select.add_argument(
         "--validation-fold",
         dest="validation_folds",
@@ -68,7 +111,10 @@ def _parser() -> argparse.ArgumentParser:
     select.add_argument("--season-mode", choices=["carry", "reset"], default="carry")
     select.add_argument("--calibration-bins", type=int, default=10)
     select.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"))
-    forecast = subparsers.add_parser("forecast", help="run one offline local Alpha fixture forecast")
+    forecast = subparsers.add_parser(
+        "forecast",
+        help="run one offline local fixture forecast (M4 research snapshot; not live data, not an Alpha/factor engine)",
+    )
     forecast.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
     forecast.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
     forecast.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
@@ -188,6 +234,22 @@ def _parser() -> argparse.ArgumentParser:
         help="read-only verification of one runtime bundle against its own manifest",
     )
     bundle_verify.add_argument("--bundle-manifest", type=Path, required=True, help="explicit runtime bundle_manifest.json")
+    demo_export = subparsers.add_parser(
+        "demo-export",
+        help=(
+            "export the packaged synthetic demo (frequency bundle, fixtures, results, DEMO.md) to one new "
+            "directory; offline, no training/prediction/settlement"
+        ),
+    )
+    demo_export.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help=(
+            "new directory to create; it must not already exist and cannot be inside the formal "
+            "data/runs roots or the package/source tree"
+        ),
+    )
     download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
     download.add_argument(
         "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
@@ -682,11 +744,44 @@ def _snapshot_session(args: argparse.Namespace) -> int:
     print(f"mode={result['mode']} audit_status={result['audit_status']}")
     if result["reasons"]:
         print(f"reasons={','.join(result['reasons'])}")
+    _print_session_evidence_summary(result)
     print(f"session_dir={result['session_dir']}")
     print(f"prediction_run={result['prediction_run_dir']}")
     print(f"session_manifest={result['session_manifest_path']}")
     print(f"session_report={result['session_report_path']}")
     return _SNAPSHOT_STATUS_EXIT[result["status"]]
+
+
+def _print_session_evidence_summary(result: dict[str, Any]) -> None:
+    """Show model/as_of/used-cutoff/bundle identity from this session's strict evidence.
+
+    Everything comes from the manifest built during this run; missing fields are
+    printed as 'unavailable' instead of being backfilled from history files.
+    """
+
+    manifest = result.get("manifest") or {}
+    snapshot = manifest.get("snapshot") or {}
+    model_names = snapshot.get("model_names") or []
+    as_of = snapshot.get("as_of")
+    as_of_value = as_of.get("value") if isinstance(as_of, dict) else as_of
+    print(
+        "model={model} as_of={as_of} used_data_cutoff={cutoff}".format(
+            model=",".join(str(name) for name in model_names) if model_names else "unavailable",
+            as_of=as_of_value or "unavailable",
+            cutoff=snapshot.get("used_data_cutoff") or "unavailable",
+        )
+    )
+    bundle = manifest.get("bundle") or {}
+    if bundle:
+        print(
+            "bundle_root={root} bundle_snapshot_id={snapshot} fresh_at_issue={fresh} "
+            "active_link_status={link}".format(
+                root=bundle.get("bundle_root") or "unavailable",
+                snapshot=bundle.get("snapshot_id") or "unavailable",
+                fresh=bundle.get("fresh_at_issue") if bundle.get("fresh_at_issue") is not None else "unavailable",
+                link=bundle.get("active_link_status") or "unavailable",
+            )
+        )
 
 
 def _snapshot_run_verify(args: argparse.Namespace) -> int:
@@ -754,6 +849,31 @@ def _runtime_bundle_verify(args: argparse.Namespace) -> int:
     print(f"bundle_root={result['bundle_root']}")
     print(f"files={result['file_count']} total_bytes={result['total_bytes']}")
     return 0 if result["status"] == "ready" else 1
+
+
+def _demo_export(args: argparse.Namespace) -> int:
+    try:
+        result = export_synthetic_demo(args.output_dir)
+    except _SNAPSHOT_EXPECTED_ERRORS as exc:
+        print(f"MatchQuant demo-export failed: {exc}", file=sys.stderr)
+        return 1
+    print("MatchQuant synthetic demo export complete")
+    print(
+        "synthetic=true model=frequency (tutorial only; not a real primary-model selection)"
+    )
+    print(f"demo_dir={result['demo_dir']}")
+    print(f"bundle_manifest={result['bundle_manifest']}")
+    print(f"bundle_manifest_sha256={result['bundle_manifest_sha256']}")
+    print(f"fixtures={result['fixtures']}")
+    print(f"results={result['results']}")
+    print(f"demo_doc={result['demo_doc']}")
+    print(f"demo_manifest={result['demo_manifest']}")
+    print(
+        f"files={result['files_exported']} bundle_verify={result['bundle_verify_status']} "
+        f"snapshot_id={result['snapshot_id']}"
+    )
+    print("next: follow the demo README section or DIR/DEMO.md (verify -> session -> audit -> settle)")
+    return 0
 
 
 def _epl_download(args: argparse.Namespace) -> int:
@@ -965,6 +1085,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_runtime_bundle_build(args))
         if args.command == "runtime-bundle-verify":
             raise SystemExit(_runtime_bundle_verify(args))
+        if args.command == "demo-export":
+            raise SystemExit(_demo_export(args))
         if args.command == "epl-download":
             raise SystemExit(_epl_download(args))
         if args.command == "epl-prepare":

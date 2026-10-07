@@ -1,9 +1,13 @@
+import contextlib
+import io as io_module
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from matchquant.cli import _parser
 
 
 class CliTests(unittest.TestCase):
@@ -70,4 +74,61 @@ class CliTests(unittest.TestCase):
             config = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
             self.assertEqual(config["schema_version"], "m4-forecast-v1")
             self.assertEqual(config["selection_evidence_status"], "explicit_model_config")
+
+
+class CliVersionAndDemoTests(unittest.TestCase):
+    def test_version_flag_reads_installed_metadata(self):
+        command = [sys.executable, "-m", "matchquant", "--version"]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        stdout = completed.stdout
+        self.assertIn("matchquant 0.1.0", stdout)
+        self.assertIn("baseline-v0.1 research", stdout)
+        self.assertLessEqual(len(stdout.strip().splitlines()), 3)
+
+    def test_demo_export_cli_succeeds_then_refuses_reexport(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "demo out"
+            command = [
+                sys.executable,
+                "-m",
+                "matchquant",
+                "demo-export",
+                "--output-dir",
+                str(target),
+            ]
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("synthetic=true model=frequency", completed.stdout)
+            self.assertIn("bundle_verify=ready", completed.stdout)
+            self.assertTrue((target / "demo_manifest.json").is_file())
+            self.assertTrue((target / "bundle" / "bundle_manifest.json").is_file())
+            self.assertTrue((target / "fixtures.csv").is_file())
+            self.assertTrue((target / "results.csv").is_file())
+            refused = subprocess.run(command, capture_output=True, text=True, check=False)
+            self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertIn("already exists", refused.stderr)
+            self.assertEqual(refused.stdout, "")
+
+    def test_help_text_avoids_network_and_alpha_misreadings(self):
+        parser = _parser()
+        buffer = io_module.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            with self.assertRaises(SystemExit) as caught:
+                parser.parse_args(["--help"])
+        self.assertEqual(caught.exception.code, 0)
+        # argparse wraps help text after hyphens; undo those joins before matching.
+        text = " ".join(buffer.getvalue().replace("-\n", "-").split())
+        self.assertIn("demo-export", text)
+        self.assertIn("--version", text)
+        self.assertIn("research", text)
+        self.assertIn("offline walk-forward backtest", text)
+        self.assertIn("not the network", text)
+        self.assertNotIn("run an online walk-forward backtest", text)
+        self.assertIn("not live data, not an Alpha/factor engine", text)
+        self.assertIn("not calibrated probabilities", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
 

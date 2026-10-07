@@ -1,0 +1,90 @@
+{
+  "schema_version": "m12-engine-snapshot-status-v1",
+  "command": "matchquant engine-snapshot-status",
+  "generated_at": "2026-10-07T09:38:10Z",
+  "status": "fresh",
+  "snapshot": {
+    "status": "valid",
+    "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd\\snapshot_manifest.json",
+    "sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006",
+    "snapshot_id": "m11_engine_snapshot_20261007T093810Z_fa40badd",
+    "schema_version": "m11-engine-snapshot-v1",
+    "history": {
+      "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history.csv",
+      "sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+      "data_cutoff": "2024-01-06",
+      "used_data_cutoff": "2024-01-06"
+    },
+    "history_manifest": {
+      "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history_manifest.json",
+      "sha256": "799c8d1bdaa0b2109229660415a877c5eb86de36cef37cf9c9e572e5eff5e99b",
+      "dataset_version": "m2.1-b05-demo",
+      "data_cutoff": "2024-01-06",
+      "output_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39"
+    },
+    "state_sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81"
+  },
+  "current_pointer": {
+    "status": "valid",
+    "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\epl_current.json",
+    "sha256": "d97c69f47eb56c02a7ffacb0cef0292cfa8e5040527264bcb52e153042a9cf58",
+    "schema_version": "m2.1-current-pointer-v1",
+    "dataset_version": "m2.1-b05-demo",
+    "canonical": {
+      "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history.csv",
+      "sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+      "recorded_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39"
+    },
+    "processed_manifest": {
+      "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history_manifest.json",
+      "sha256": "799c8d1bdaa0b2109229660415a877c5eb86de36cef37cf9c9e572e5eff5e99b",
+      "dataset_version": "m2.1-b05-demo",
+      "data_cutoff": "2024-01-06",
+      "output_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39"
+    }
+  },
+  "comparison": {
+    "canonical": {
+      "path_match": true,
+      "hash_match": true,
+      "snapshot_path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history.csv",
+      "pointer_path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history.csv",
+      "snapshot_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+      "pointer_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39"
+    },
+    "processed_manifest": {
+      "path_match": true,
+      "hash_match": true,
+      "snapshot_path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history_manifest.json",
+      "pointer_path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history_manifest.json",
+      "snapshot_sha256": "799c8d1bdaa0b2109229660415a877c5eb86de36cef37cf9c9e572e5eff5e99b",
+      "pointer_sha256": "799c8d1bdaa0b2109229660415a877c5eb86de36cef37cf9c9e572e5eff5e99b"
+    },
+    "dataset_version": {
+      "match": true,
+      "snapshot": "m2.1-b05-demo",
+      "pointer": "m2.1-b05-demo"
+    }
+  },
+  "reasons": [],
+  "validation": {
+    "inputs_unchanged": true,
+    "snapshot_mutated": false,
+    "current_pointer_mutated": false,
+    "history_mutated": false,
+    "network_accessed": false,
+    "automatic_latest_lookup": false,
+    "automatic_apply": false,
+    "automatic_rebuild": false
+  },
+  "outputs": {
+    "audit_dir": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\m12_out\\m12_engine_snapshot_status_20261007T093810Z_775a5a6f",
+    "status_manifest": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\m12_out\\m12_engine_snapshot_status_20261007T093810Z_775a5a6f\\snapshot_status.json",
+    "status_report": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\m12_out\\m12_engine_snapshot_status_20261007T093810Z_775a5a6f\\snapshot_status.md"
+  },
+  "limitations": [
+    "fresh 只表示显式 snapshot history/history-manifest 证据与显式 current pointer 的路径、hash 和 dataset version 精确匹配。",
+    "stale 快照仍可由现有 M11 predict 独立复现；本命令不自动重建快照。",
+    "data cutoff 和本地 active pointer 不代表互联网实时性。"
+  ]
+}

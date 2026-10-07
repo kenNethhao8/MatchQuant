@@ -1,0 +1,16 @@
+{
+  "schema_version": "baseline-team-index-v1",
+  "model": "frequency",
+  "algorithm_source": "no_team_learning_state",
+  "state_file_sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81",
+  "model_payload_sha256": "d017d9232f8e3b4c6c0db86fd67f5b74191b916ab4c12ce186e8be8712a6ea14",
+  "model_config_sha256": "aa2c2c4f06f30aad68230de36f5f37ac04bb3795c349ea02ffd79bb7ae600405",
+  "team_membership": "not_applicable",
+  "frequency_basis": "global",
+  "teams": [],
+  "notes": [
+    "frequency 模型没有球队学习状态：index 为空并声明全局频率（global）。",
+    "不能把空球队列表当作球队清单，也不能把任何输入球队称为新队或虚构训练球队。",
+    "已知/未知球队的区分对该模型不适用；每个 fixture 都使用同一全局频率分布。"
+  ]
+}

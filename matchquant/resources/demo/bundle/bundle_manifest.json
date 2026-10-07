@@ -1,0 +1,152 @@
+{
+  "schema_version": "baseline-runtime-bundle-v1",
+  "command": "matchquant runtime-bundle-build",
+  "generated_at": "2026-10-07T09:38:10Z",
+  "build_job_id": "runtime_bundle_build_20261007T093810Z_f532688c",
+  "snapshot_id": "m11_engine_snapshot_20261007T093810Z_fa40badd",
+  "model": {
+    "model": "frequency",
+    "config": {
+      "alpha": 1.0
+    },
+    "config_sha256": "aa2c2c4f06f30aad68230de36f5f37ac04bb3795c349ea02ffd79bb7ae600405",
+    "state_payload_sha256": "d017d9232f8e3b4c6c0db86fd67f5b74191b916ab4c12ce186e8be8712a6ea14"
+  },
+  "original_snapshot": {
+    "snapshot_id": "m11_engine_snapshot_20261007T093810Z_fa40badd",
+    "schema_version": "m11-engine-snapshot-v1",
+    "manifest_file_sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006",
+    "manifest_content_sha256": "6970e42413a6306b4dc8b44c63a206967823730d29e4cf16d54c1d66d89e3dd7",
+    "state_file_sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81",
+    "provenance_baseline_dir": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd",
+    "issue_source_file": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\issue_fresh.json",
+    "issue_source_file_sha256": "e3485f5d5b35c997f5947a4a2bd6841868898b63692a0c731b4e83403c281319"
+  },
+  "derived_snapshot": {
+    "snapshot_id": "m11_engine_snapshot_20261007T093810Z_fa40badd",
+    "manifest_relative_path": "snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/snapshot_manifest.json",
+    "manifest_file_sha256": "d1625767c86da85cd4afb5692650c4e5474567c32479b9591d7556f66d9f81c4",
+    "manifest_content_sha256": "f59c1cb5687b39cb5ba8d85e9397907cdeefcf223d2ba504a1d3bbefd2103951",
+    "state_relative_path": "snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/model_states.json",
+    "state_file_sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81"
+  },
+  "state_file_sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81",
+  "issue_evidence": {
+    "relative_path": "evidence/issue_audit.json",
+    "file_sha256": "e3485f5d5b35c997f5947a4a2bd6841868898b63692a0c731b4e83403c281319",
+    "schema_version": "m12-engine-snapshot-status-v1",
+    "record_status": "fresh",
+    "record_generated_at": "2026-10-07T09:38:10Z",
+    "recorded_snapshot_sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006",
+    "original_manifest_file_sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006",
+    "fresh_at_issue": true,
+    "validation_kind": "bundle_original_issue_via_derived_manifest_lineage"
+  },
+  "original_manifest_copy": {
+    "relative_path": "evidence/original_snapshot_manifest.json",
+    "file_sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006",
+    "content_sha256": "6970e42413a6306b4dc8b44c63a206967823730d29e4cf16d54c1d66d89e3dd7"
+  },
+  "team_index": {
+    "relative_path": "team_index.json",
+    "file_sha256": "54984a01d1c02173ab3d326643e29e32aa11728a6722daf64f53ce2a520868d8",
+    "schema_version": "baseline-team-index-v1"
+  },
+  "files": [
+    {
+      "path": "evidence/issue_audit.json",
+      "bytes": 5106,
+      "sha256": "e3485f5d5b35c997f5947a4a2bd6841868898b63692a0c731b4e83403c281319"
+    },
+    {
+      "path": "evidence/original_snapshot_manifest.json",
+      "bytes": 3555,
+      "sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006"
+    },
+    {
+      "path": "RUN.md",
+      "bytes": 1760,
+      "sha256": "7d45be645617b1087ece7b99d2b9ea43ebbf902421cfb708753c39fc21fc25f1"
+    },
+    {
+      "path": "snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/model_states.json",
+      "bytes": 470,
+      "sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81"
+    },
+    {
+      "path": "snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/snapshot_manifest.json",
+      "bytes": 2975,
+      "sha256": "d1625767c86da85cd4afb5692650c4e5474567c32479b9591d7556f66d9f81c4"
+    },
+    {
+      "path": "snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/snapshot_report.md",
+      "bytes": 1169,
+      "sha256": "b8c2e19cebb58b8e774bd7e6e84094f3ba14e14bc9c66d78990dfe26b46bdd12"
+    },
+    {
+      "path": "team_index.json",
+      "bytes": 846,
+      "sha256": "54984a01d1c02173ab3d326643e29e32aa11728a6722daf64f53ce2a520868d8"
+    }
+  ],
+  "manifest_field_diffs": {
+    "allowed_leaf_paths": [
+      "manifest_sha256",
+      "outputs.model_states",
+      "outputs.snapshot_dir",
+      "outputs.snapshot_manifest",
+      "outputs.snapshot_report",
+      "state.path"
+    ],
+    "observed": [
+      {
+        "field": "manifest_sha256",
+        "original": "6970e42413a6306b4dc8b44c63a206967823730d29e4cf16d54c1d66d89e3dd7",
+        "derived": "f59c1cb5687b39cb5ba8d85e9397907cdeefcf223d2ba504a1d3bbefd2103951",
+        "change": "changed"
+      },
+      {
+        "field": "outputs.model_states",
+        "original": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd\\model_states.json",
+        "derived": "model_states.json",
+        "change": "changed"
+      },
+      {
+        "field": "outputs.snapshot_dir",
+        "original": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd",
+        "derived": ".",
+        "change": "changed"
+      },
+      {
+        "field": "outputs.snapshot_manifest",
+        "original": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd\\snapshot_manifest.json",
+        "derived": "snapshot_manifest.json",
+        "change": "changed"
+      },
+      {
+        "field": "outputs.snapshot_report",
+        "original": null,
+        "derived": "snapshot_report.md",
+        "change": "added"
+      },
+      {
+        "field": "state.path",
+        "original": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\engine_snapshots\\m11_engine_snapshot_20261007T093810Z_fa40badd\\model_states.json",
+        "derived": "model_states.json",
+        "change": "changed"
+      }
+    ]
+  },
+  "size": {
+    "payload_bytes": 15881,
+    "file_count": 7,
+    "actual_file_count": 8,
+    "limit_bytes": 5242880,
+    "includes_bundle_manifest": false
+  },
+  "limitations": [
+    "运行包只保留派生快照、state、原 manifest/issue 字节副本与 team index；不含 raw/canonical CSV、赛果、训练文件、可执行对象或完整候选预测。",
+    "build ready 只表示工程包完整；active_link_status 仍为 not_checked_in_runtime，fresh_at_issue 只表示原发行记录经派生桥关联，不证明当前覆盖。",
+    "包体没有签名来源认证；hash 证明本次输入一致性，不能发现所有字段同步伪造的包体。"
+  ]
+}

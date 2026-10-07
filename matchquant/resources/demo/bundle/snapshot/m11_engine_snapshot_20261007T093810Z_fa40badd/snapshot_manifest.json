@@ -1,0 +1,80 @@
+{
+  "as_of": {
+    "date_only": true,
+    "timestamp": "2024-01-07T00:00:00",
+    "value": "2024-01-07"
+  },
+  "disclaimer": "M11 是本地研究状态快照，不是实时赛程服务；概率仅表示模型输出的有限、非负且归一化的算术结果，不宣称已经校准，不构成投注建议、盈利承诺或未来表现保证。",
+  "generated_at": "2026-10-07T09:38:10Z",
+  "history": {
+    "data_cutoff": "2024-01-06",
+    "observed_cutoff": "2024-01-06",
+    "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history.csv",
+    "rows": 7,
+    "rows_excluded_at_or_after_as_of": 0,
+    "rows_used_before_as_of": 7,
+    "sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+    "used_data_cutoff": "2024-01-06"
+  },
+  "history_manifest": {
+    "data_cutoff": "2024-01-06",
+    "dataset_version": "m2.1-b05-demo",
+    "output_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+    "path": "D:\\matchquant\\handoff\\zcode_reports\\B05_20261007T093107Z_05138e9f\\work\\demo_research\\inputs\\history_manifest.json",
+    "schema_version": "m2.1-processed-manifest-v1",
+    "sha256": "799c8d1bdaa0b2109229660415a877c5eb86de36cef37cf9c9e572e5eff5e99b"
+  },
+  "manifest_sha256": "f59c1cb5687b39cb5ba8d85e9397907cdeefcf223d2ba504a1d3bbefd2103951",
+  "model_names": [
+    "frequency"
+  ],
+  "models": [
+    {
+      "config": {
+        "alpha": 1.0
+      },
+      "config_sha256": "aa2c2c4f06f30aad68230de36f5f37ac04bb3795c349ea02ffd79bb7ae600405",
+      "config_source": {
+        "mode": "api",
+        "path": null,
+        "sha256": null
+      },
+      "model": "frequency",
+      "state_codec": "m11-engine-state-v1",
+      "state_sha256": "d017d9232f8e3b4c6c0db86fd67f5b74191b916ab4c12ce186e8be8712a6ea14"
+    }
+  ],
+  "outputs": {
+    "model_states": "model_states.json",
+    "snapshot_dir": ".",
+    "snapshot_manifest": "snapshot_manifest.json",
+    "snapshot_report": "snapshot_report.md"
+  },
+  "schema_version": "m11-engine-snapshot-v1",
+  "season_mode": "carry",
+  "selection": {
+    "current_history_sha256": "91b0947366a203f9683455670ebf99d056cd231a41a8da07f5593b9b2d188d39",
+    "evidence_status": "explicit_model_config",
+    "history_hash_status": "not_applicable",
+    "mode": "explicit_model_config",
+    "path": null,
+    "schema_version": null,
+    "selection_history_sha256": null,
+    "selection_season_mode": null,
+    "sha256": null
+  },
+  "snapshot_id": "m11_engine_snapshot_20261007T093810Z_fa40badd",
+  "state": {
+    "path": "model_states.json",
+    "schema_version": "m11-engine-state-v1",
+    "sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81"
+  },
+  "validation": {
+    "fixture_results_used_for_model_updates": false,
+    "history_copied": false,
+    "history_rows_strictly_before_as_of": 7,
+    "input_files_unchanged": true,
+    "network_accessed": false,
+    "snapshot_is_immutable": true
+  }
+}

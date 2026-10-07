@@ -2,18 +2,86 @@
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
-## 安装（baseline-v0.1，B00 验证）
+## 安装（baseline-v0.1，B05 验证：wheel + wheelhouse 离线安装）
 
-不要依赖全局 PATH 上的 `python`；请在项目内建立独立虚拟环境。`constraints-baseline-v0.1.txt` 固定的依赖（numpy 2.3.5、pandas 3.0.1）要求 **Python >= 3.11**；本轮实际验证的解释器仅为 CPython 3.13.15，其它 3.11+ 版本未在此环境验证：
+Python 包版本为 **0.1.0**；`baseline-v0.1` 是研究交付标识，代码版本由最终 commit 与 wheel hash 共同区分。安装要求 **Python >= 3.11**；本轮强制验证的组合仅为 **Windows x86-64 CPython 3.13.15 / numpy 2.3.5 / pandas 3.0.1**，其它 3.11+ 组合未验证，不承诺跨系统/跨版本全面兼容。
+
+安装材料随 baseline 交付提供：wheelhouse 目录内含 matchquant wheel、全部运行依赖 wheel（numpy/pandas/python-dateutil/six/tzdata）与逐文件 SHA-256 清单；该目录不进 Git。安装到一个**新的独立 venv**，全程 `--no-index`（不联网）：
 
 ```powershell
-# 使用本机已验证的解释器创建 .venv。本机 py 启动器选择器：py -V:Astral/CPython3.13.15；
-# 注意 `py -3.13` 不识别 uv 注册的解释器。也可直接指定任意 Python >= 3.11 解释器路径。
-py -V:Astral/CPython3.13.15 -m venv .venv   # 或：<python.exe> -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e . -c constraints-baseline-v0.1.txt
+# 变量：改成你自己的路径；含空格的路径必须加引号
+$Py       = "C:\path\to\python.exe"   # 本机已确认的 Python >= 3.11 解释器（不要依赖全局 PATH）
+$Root     = "D:\mq-install"           # 新的安装根目录（自行选择）
+$WheelDir = "D:\path\to\delivery\wheelhouse"
+
+& $Py -m venv "$Root\.venv"
+& "$Root\.venv\Scripts\python.exe" -m pip install --no-index --find-links "$WheelDir" "matchquant==0.1.0"
+& "$Root\.venv\Scripts\python.exe" -m pip check
 ```
 
-`constraints-baseline-v0.1.txt` 固定了 B00 实际验证的依赖版本（numpy 2.3.5、pandas 3.0.1）；editable 安装只联网获取依赖，之后所有测试与 `run`/`forecast`/`settle` 等命令均完全离线。后续命令请用 `.\.venv\Scripts\python.exe -m matchquant ...` 替代 README 示例中的 `python -m matchquant ...`。`.venv/` 不提交 Git。
+安装核验（三条都应成功，退出 0）：
+
+```powershell
+& "$Root\.venv\Scripts\matchquant.exe" --version
+& "$Root\.venv\Scripts\python.exe" -m matchquant --version
+& "$Root\.venv\Scripts\python.exe" -c "import matchquant; print(matchquant.__file__)"
+```
+
+`--version` 从实际安装 metadata 读取版本；`matchquant.__file__` 必须位于该 venv 的 `site-packages` 下。这是普通（非 editable）安装：不依赖源码目录、PYTHONPATH 或 .pth 兜底。后续命令一律使用 `"$Root\.venv\Scripts\matchquant.exe" ...` 或 `"$Root\.venv\Scripts\python.exe" -m matchquant ...`。若在错误解释器上运行（numpy/pandas 不可导入），CLI 会给出指向正确 venv 与离线安装步骤的明确诊断（退出码 1），而不是裸 traceback。
+
+`constraints-baseline-v0.1.txt` 保留直接依赖约束含义（numpy 2.3.5、pandas 3.0.1）；完整运行传递依赖的精确版本与 wheel hash 见交付的安装清单。开发（源码）安装仅供开发使用：`pip install -e . -c constraints-baseline-v0.1.txt`；wheel/安装验收不使用 editable 安装，也不复用开发 venv。
+
+仓库内 `examples/` 目录属于源码 checkout；仅安装 wheel 的用户可在 `site-packages\matchquant\resources\examples\` 下找到同一组示例文件（只读资源），演示主流程则使用 `demo-export` 导出的包内资源，不依赖源码目录。
+
+## 快速开始：合成演示闭环（全部离线）
+
+`demo-export` 把包内自带的合成教学资源导出到一个**新目录**：frequency 单模型运行包（B04 固定 8 文件）、无比分 fixtures、独立 canonical results、`DEMO.md` 与 `demo_manifest.json`。它不训练、不预测、不结算、不运行 M12、不联网，也绝不覆盖已有目录；导出完成前会先用现有 `runtime-bundle-verify` 校验导出包。frequency 仅用于教程演示，不是真实 primary model 的选择结论。
+
+```powershell
+# 变量：沿用安装节的 $Root；$DemoDir 演示含空格引用
+$DemoDir  = "$Root\demo export"
+
+# 1) 导出合成演示（目标必须不存在；拒绝重复导出/覆盖）
+& "$Root\.venv\Scripts\matchquant.exe" demo-export --output-dir "$DemoDir"
+
+# 2) 只读验证运行包（退出 0 = ready）
+& "$Root\.venv\Scripts\matchquant.exe" runtime-bundle-verify --bundle-manifest "$DemoDir\bundle\bundle_manifest.json"
+
+# 3) replay 预测会话：输出到新建空目录（退出 0 = ready；retrospective 回溯，不是实时预测）
+$SessionRoot = "$Root\runs\replay session 1"
+& "$Root\.venv\Scripts\matchquant.exe" snapshot-session --bundle-manifest "$DemoDir\bundle\bundle_manifest.json" --fixtures "$DemoDir\fixtures.csv" --mode replay --output-root "$SessionRoot"
+```
+
+第 3 步输出包含 `session_dir=...`。把它填入 `$SessionDir`，并从该次会话自己的 `session_manifest.json` 读取 `outputs.prediction_run_dir` 再做审计/结算——不要扫描 latest、不要猜测其它运行目录、也不要把会话目录本身冒充 M11 prediction run：
+
+```powershell
+$SessionDir = "$SessionRoot\baseline_snapshot_session_<把第3步输出的session_dir目录名填这里>"
+$Session    = Get-Content "$SessionDir\session_manifest.json" -Raw | ConvertFrom-Json
+$RunDir     = $Session.outputs.prediction_run_dir
+
+# 4) 独立只读审计（退出 0 = ready）
+& "$Root\.venv\Scripts\matchquant.exe" snapshot-run-verify --forecast-run "$RunDir" --bundle-manifest "$DemoDir\bundle\bundle_manifest.json" --output-root "$Root\runs\audit 1"
+
+# 5) 独立结算：results.csv 只在这一步被显式读取（期望 complete、settled=2/2、coverage=1.0）
+& "$Root\.venv\Scripts\matchquant.exe" settle --forecast-run "$RunDir" --results "$DemoDir\results.csv" --output-root "$Root\runs\settle 1"
+```
+
+research 模式（可选）：同一路径但 `--mode research`，表示本地待赛研究。即使工程校验全部通过，因目标时点赛果覆盖未证明，状态恒为 `needs_review`（退出 2，理由 `coverage_to_fixture_time_not_proven`），并保留全部审查产物；它不能被包装成当前可用预测产品：
+
+```powershell
+& "$Root\.venv\Scripts\matchquant.exe" snapshot-session --bundle-manifest "$DemoDir\bundle\bundle_manifest.json" --fixtures "$DemoDir\fixtures.csv" --mode research --output-root "$Root\runs\research session 1"
+```
+
+### 状态与退出码
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 完成：replay 会话/独立审计 `ready`，结算 `complete`（或 `partial`） |
+| 2 | 完成但需人工审查：research 会话恒 `needs_review`；结算 `needs_review` 同样退出 2 |
+| 1 | 输入/IO/校验失败或 `blocked`（bundle 校验失败、导出目标被拒、依赖缺失诊断等） |
+| 2（argparse） | 命令行用法错误（如缺参数、互斥参数）；这是调用错误，不是 needs_review 审计结果 |
+
+时间边界分别显示、不能混用：`as_of` 是快照状态边界（date-only 时排除当天全部结果），`used_data_cutoff` 是实际进入模型状态的最后历史日期，fixture 日期是待赛时间。会话摘要从本次严格加载的证据显示模型/as_of/used cutoff/输出路径；bundle 会话同时显示 `fresh_at_issue`（发行时点的历史关联验证）与固定的 `active_link_status=not_checked_in_runtime`（运行端不检查当前 pointer）——它们都不证明数据当前、今天最新或训练到目标比赛。频率模型的演示声明全局频率基础；已知球队也不证明其仍参加当前赛季。概率仅保证有限、非负、和为 1，不宣称已校准，不构成投注建议。
 
 ## 输入格式
 
@@ -168,7 +236,7 @@ M7 manifest 会明确标记 `status=unverified` 和 `validation_status=unverifie
 
 M3 的 `select` 命令只读取显式给出的本地 canonical CSV、仓库内候选配置和相邻的可选 processed manifest，不联网、不调用 `epl-sync`，也不会修改 `D:\Codex\matchquant_data\`。默认输出为 `D:\Codex\matchquant_runs\m3_select_<UTC时间>_<唯一ID>\`。
 
-候选配置位于 [`examples/m3_candidates.json`](examples/m3_candidates.json)，枚举 M1 已有的 Frequency、Elo、Poisson 及其少量参数组合；它不会改变 `run` 命令的默认模型或参数。示例：
+候选配置位于 [`examples/m3_candidates.json`](examples/m3_candidates.json)，枚举 M1 已有的 Frequency、Elo、Poisson 及其少量参数组合；它不会改变 `run` 命令的默认模型或参数。`select` 的默认候选配置就是打包进 wheel 的同一文件（`matchquant/resources/m3_candidates.json` 包内资源），因此在 wheel 安装环境中不指定 `--candidate-config` 也能运行；显式 `--candidate-config` 语义不变，仍会覆盖默认值。示例：
 
 ```powershell
 python -m matchquant select `

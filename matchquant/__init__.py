@@ -2,6 +2,7 @@
 
 from .backtest import ModelRun, run_models, run_walk_forward
 from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
+from .demo_export import export_synthetic_demo
 from .epl import (
     DEFAULT_EPL_SEASONS,
     audit_source_frame,
@@ -151,6 +152,7 @@ __all__ = [
     "convert_fixture_source_frame",
     "download_epl",
     "evaluate_predictions",
+    "export_synthetic_demo",
     "file_sha256",
     "forecast_fixtures",
     "load_fixtures",

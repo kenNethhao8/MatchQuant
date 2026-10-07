@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 matchquant_data/
 matchquant_runs/
+build/
+dist/
+wheelhouse/

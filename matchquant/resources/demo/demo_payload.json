@@ -1,0 +1,63 @@
+{
+  "schema_version": "b05-demo-payload-v1",
+  "note": "Exported by matchquant demo-export; every file must be copied byte-for-byte. All content is synthetic teaching material.",
+  "synthetic": true,
+  "model": "frequency",
+  "files": [
+    {
+      "path": "bundle/bundle_manifest.json",
+      "size": 7221,
+      "sha256": "e820ba95ee9207f2c263c474426eb0603a8a86ced3279800a67cb4dd57aad34b"
+    },
+    {
+      "path": "bundle/evidence/issue_audit.json",
+      "size": 5106,
+      "sha256": "e3485f5d5b35c997f5947a4a2bd6841868898b63692a0c731b4e83403c281319"
+    },
+    {
+      "path": "bundle/evidence/original_snapshot_manifest.json",
+      "size": 3555,
+      "sha256": "31debcd48b818334ed7e13d47fde655174e2a26c061eb6f33723ff979b944006"
+    },
+    {
+      "path": "bundle/RUN.md",
+      "size": 1760,
+      "sha256": "7d45be645617b1087ece7b99d2b9ea43ebbf902421cfb708753c39fc21fc25f1"
+    },
+    {
+      "path": "bundle/snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/model_states.json",
+      "size": 470,
+      "sha256": "e1b57995c8608dd8cb5321ade08e6b351565c60c4932ec432784c7ffb8874e81"
+    },
+    {
+      "path": "bundle/snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/snapshot_manifest.json",
+      "size": 2975,
+      "sha256": "d1625767c86da85cd4afb5692650c4e5474567c32479b9591d7556f66d9f81c4"
+    },
+    {
+      "path": "bundle/snapshot/m11_engine_snapshot_20261007T093810Z_fa40badd/snapshot_report.md",
+      "size": 1169,
+      "sha256": "b8c2e19cebb58b8e774bd7e6e84094f3ba14e14bc9c66d78990dfe26b46bdd12"
+    },
+    {
+      "path": "bundle/team_index.json",
+      "size": 846,
+      "sha256": "54984a01d1c02173ab3d326643e29e32aa11728a6722daf64f53ce2a520868d8"
+    },
+    {
+      "path": "DEMO.md",
+      "size": 3749,
+      "sha256": "2d3a692827f1f6fe3d2c15d5f655d592012c8a300a1cbd2bf57962254d0de592"
+    },
+    {
+      "path": "fixtures.csv",
+      "size": 148,
+      "sha256": "8db7b9ad44af6ab5ce5fe54092e06d3717d928aa5b2b5c8a2f1aee09a7021f46"
+    },
+    {
+      "path": "results.csv",
+      "size": 176,
+      "sha256": "00ac590395fad6f8c14b3d3fdc53076cf27a29d03b2c8a56a8c73a783b8c6526"
+    }
+  ]
+}

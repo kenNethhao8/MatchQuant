@@ -1,0 +1,7 @@
+{
+  "prior_home_goals": 1.5,
+  "prior_away_goals": 1.2,
+  "prior_weight": 3.0,
+  "max_goals": 10,
+  "tail_tolerance": 1e-12
+}

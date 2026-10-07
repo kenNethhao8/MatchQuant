@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "config": {
+        "alpha": 1.0
+      },
+      "config_sha256": "aa2c2c4f06f30aad68230de36f5f37ac04bb3795c349ea02ffd79bb7ae600405",
+      "model": "frequency",
+      "state": {
+        "alpha": 1.0,
+        "counts": {
+          "A": 4.0,
+          "D": 3.0,
+          "H": 3.0
+        }
+      },
+      "state_sha256": "d017d9232f8e3b4c6c0db86fd67f5b74191b916ab4c12ce186e8be8712a6ea14"
+    }
+  ],
+  "schema_version": "m11-engine-state-v1"
+}
