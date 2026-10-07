@@ -724,6 +724,12 @@ def _runtime_bundle_build(args: argparse.Namespace) -> int:
     print(f"MatchQuant runtime bundle build {result['status']}")
     if result["reasons"]:
         print(f"reasons={'; '.join(result['reasons'])}")
+    for error in result.get("output_write_errors") or []:
+        print(
+            f"note: some required build artifacts could not be persisted: {error}; "
+            "existing artifacts stay on disk, and the job record lists the final delivery state",
+            file=sys.stderr,
+        )
     print(f"snapshot_id={result['snapshot_id']}")
     print(f"build_dir={result['build_dir']}")
     print(f"bundle_dir={result['bundle_dir']}")

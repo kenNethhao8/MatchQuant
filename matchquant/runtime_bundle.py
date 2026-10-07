@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .engine_snapshot_manifest import load_engine_snapshot, write_snapshot_manifest
+from .forecast_report import _markdown_text as _markdown_escape
 from .io import file_sha256, write_json
 from .runtime_bundle_validation import (
     ALLOWED_ADDED_FIELDS,
@@ -44,6 +45,12 @@ from .team_index import TEAM_INDEX_SCHEMA_VERSION, build_team_index
 BUNDLE_BUILD_DIR_PREFIX = "runtime_bundle_build_"
 _BUNDLE_DIR_NAME = "bundle"
 _ORIGINAL_OUTPUTS_KEYS = {"snapshot_dir", "snapshot_manifest", "model_states", "snapshot_report"}
+
+
+def _bundle_total_bytes(bundle_dir: Path) -> int:
+    """Sum of all actual file sizes under the bundle directory (uncompressed)."""
+
+    return sum(entry.stat().st_size for entry in bundle_dir.rglob("*") if entry.is_file())
 
 _BASE_LIMITATIONS = (
     "运行包只保留派生快照、state、原 manifest/issue 字节副本与 team index；"
@@ -201,31 +208,13 @@ def build_runtime_bundle(
         "limitations": list(_BASE_LIMITATIONS),
     }
 
-    def finish() -> dict[str, Any]:
-        """Persist the final delivery state; report/job/hash failures decide the status.
+    def _render_build_report_lines(job_persistence_error: str | None) -> list[str]:
+        """Render the Chinese build report from the CURRENT delivery state.
 
-        The build report, the bundle-manifest hash, and the job record are the
-        required build artifacts. If any of them fails while the job directory is
-        still writable, the persisted delivery is blocked (finalize=failed,
-        required_artifact_write_failed) even when the candidate bundle itself is
-        complete; the job JSON is written last with the final status. A failing
-        job write raises an honest expected IO error instead of pretending a
-        record exists.
+        Called only after the delivery status/stages/reasons have been decided,
+        and once more (bounded) after a job-record write failure, so a written
+        report never shows a pre-final ready state.
         """
-
-        delivery_errors: list[str] = []
-        if Path(result["bundle_manifest_path"]).is_file():
-            try:
-                result["bundle_manifest_sha256"] = file_sha256(result["bundle_manifest_path"])
-            except OSError as exc:
-                result["bundle_manifest_sha256"] = None
-                delivery_errors.append(f"bundle_manifest_sha256: {exc}")
-        try:
-            total = sum(entry.stat().st_size for entry in bundle_dir.rglob("*") if entry.is_file())
-            result["total_bytes"] = total
-        except OSError as exc:
-            total = None
-            delivery_errors.append(f"bundle_size_inventory: {exc}")
 
         status_text = "blocked" if result["status"] == "blocked" else "ready"
         lines = [
@@ -237,7 +226,7 @@ def build_runtime_bundle(
             f"- snapshot_id：`{result['snapshot_id']}`",
             f"- 包内载荷文件数：{result['file_count']}（实际文件数含 bundle_manifest.json 为 "
             f"{(result['file_count'] + 1) if result['file_count'] is not None else None}）；"
-            f"载荷字节 {result['payload_bytes']}；解压总字节（含清单）{total}"
+            f"载荷字节 {result['payload_bytes']}；解压总字节（含清单）{result.get('total_bytes')}"
             f"（上限 {RUNTIME_BUNDLE_SIZE_LIMIT_BYTES}）",
             "",
             "## 阶段",
@@ -247,6 +236,18 @@ def build_runtime_bundle(
         if result["reasons"]:
             lines.extend(["", "## 理由", ""])
             lines.extend(f"- `{reason}`" for reason in result["reasons"])
+        if job_persistence_error is not None:
+            lines.extend(
+                [
+                    "",
+                    "## 产物持久化状态",
+                    "",
+                    f"- 构建作业记录（build_job.json）不可写：`{_markdown_escape(job_persistence_error)}`；"
+                    "本报告是最终交付状态的持久记录（blocked），作业 JSON 未写出。",
+                    "- 已有产物：包目录、已完成的工程阶段与合法候选包按实际保留；"
+                    "独立 verify 仍可描述候选包的工程完整性，但不能把本次构建交付当作 ready。",
+                ]
+            )
         lines.extend(
             [
                 "",
@@ -255,23 +256,64 @@ def build_runtime_bundle(
                 "",
             ]
         )
+        return lines
+
+    def _decide_delivery_state(errors: list[str]) -> None:
+        """Fold required-artifact failures into the final persisted delivery state.
+
+        Called before the report is rendered, so the report never renders a
+        stale ready state for an already-known persistence failure.
+        """
+
+        if not errors:
+            return
+        result["output_write_errors"] = list(errors)
+        stages["finalize"] = "failed"
+        result["reasons"] = list(result["reasons"]) + [
+            "required_artifact_write_failed: " + "; ".join(errors)
+        ]
+        if result["status"] == "ready":
+            result["status"] = "blocked"
+            result["limitations"] = list(result["limitations"]) + [
+                "工程阶段与候选包按实际保留（独立 verify 仍可描述其工程完整性）；"
+                "但必需构建产物持久化失败，交付状态为 blocked，不能当作 ready。"
+            ]
+
+    def finish() -> dict[str, Any]:
+        """Persist the final delivery state; report/job/hash failures decide the status.
+
+        The delivery status, stages, and reasons are decided BEFORE the report
+        is rendered, so the written report always matches the returned status
+        and the job record. A failing job write triggers one bounded report
+        rewrite recording the unwritable job, then raises an honest expected IO
+        error; if the report cannot be updated either, the error says which
+        artifacts exist and warns that an earlier report must not be treated as
+        the final delivery. No retries beyond that, and unknown errors are never
+        swallowed.
+        """
+
+        delivery_errors: list[str] = []
+        if Path(result["bundle_manifest_path"]).is_file():
+            try:
+                result["bundle_manifest_sha256"] = file_sha256(result["bundle_manifest_path"])
+            except OSError as exc:
+                result["bundle_manifest_sha256"] = None
+                delivery_errors.append(f"bundle_manifest_sha256: {exc}")
         try:
-            _write_utf8_text(report_path, "\n".join(lines))
+            total = _bundle_total_bytes(bundle_dir)
+            result["total_bytes"] = total
+        except OSError as exc:
+            total = None
+            delivery_errors.append(f"bundle_size_inventory: {exc}")
+
+        # Decide the final delivery state BEFORE rendering the report.
+        _decide_delivery_state(delivery_errors)
+
+        try:
+            _write_utf8_text(report_path, "\n".join(_render_build_report_lines(None)))
         except OSError as exc:
             delivery_errors.append(f"build_report: {exc}")
-
-        if delivery_errors:
-            result["output_write_errors"] = delivery_errors
-            stages["finalize"] = "failed"
-            result["reasons"] = list(result["reasons"]) + [
-                "required_artifact_write_failed: " + "; ".join(delivery_errors)
-            ]
-            if result["status"] == "ready":
-                result["status"] = "blocked"
-                result["limitations"] = list(result["limitations"]) + [
-                    "工程阶段与候选包按实际保留（独立 verify 仍可描述其工程完整性）；"
-                    "但必需构建产物持久化失败，交付状态为 blocked，不能当作 ready。"
-                ]
+            _decide_delivery_state(delivery_errors)
 
         job_payload = {
             "schema_version": RUNTIME_BUNDLE_SCHEMA_VERSION,
@@ -297,7 +339,7 @@ def build_runtime_bundle(
             "file_count": result["file_count"],
             "payload_bytes": result["payload_bytes"],
             "actual_file_count": (result["file_count"] + 1) if result["file_count"] is not None else None,
-            "total_bytes": total,
+            "total_bytes": result.get("total_bytes"),
             "limit_bytes": RUNTIME_BUNDLE_SIZE_LIMIT_BYTES,
             "size_note": "total_bytes 为解压后包内全部实际文件（含 bundle_manifest.json）之和；超限即 blocked。",
             "output_write_errors": result.get("output_write_errors", []),
@@ -306,10 +348,25 @@ def build_runtime_bundle(
         try:
             write_json(job_payload, job_json_path)
         except OSError as exc:
+            job_error = f"build_job: {exc}"
+            delivery_errors.append(job_error)
+            _decide_delivery_state(delivery_errors)
+            updated_note = (
+                f"the build report at '{report_path}' was updated to the final blocked delivery state "
+                "(job record unwritable)"
+            )
+            try:
+                _write_utf8_text(report_path, "\n".join(_render_build_report_lines(str(exc))))
+            except OSError as report_exc:
+                updated_note = (
+                    f"the build report at '{report_path}' could NOT be updated either ({report_exc}); "
+                    "any report already on disk may show a pre-final state and must not be treated as "
+                    "the final delivery"
+                )
             raise OSError(
                 f"could not persist the runtime bundle build job record '{job_json_path}': {exc}; "
                 f"the build directory {job_dir} and any completed bundle artifacts remain on disk, "
-                "but no build job record could be written"
+                f"but no build job record could be written; {updated_note}"
             ) from exc
         return result
 

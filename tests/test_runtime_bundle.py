@@ -1433,6 +1433,16 @@ class BundleReworkTests(RuntimeBundleTestBase):
                         )
                 self.assertEqual(cli_exit.exception.code, 1)
                 self.assertIn("build job record", stderr.getvalue())
+            # The report still writable at job-write time must have been updated
+            # (bounded single rewrite) to the final blocked delivery state.
+            job_dirs = sorted((root / "jobs").iterdir())
+            report_path = job_dirs[-1] / "build_report.md"
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("构建状态：`blocked`", report)
+            self.assertNotIn("构建状态：`ready`", report)
+            self.assertIn("- `finalize`：`failed`", report)
+            self.assertIn("build_job", report)
+            self.assertIn("不可写", report)
 
     def test_required_bundle_manifest_hash_read_failure_blocks_delivery(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1450,14 +1460,41 @@ class BundleReworkTests(RuntimeBundleTestBase):
                 build = build_runtime_bundle(
                     built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
                 )
-            self.assertEqual(build["status"], "blocked")
-            self.assertEqual(build["stages"]["finalize"], "failed")
-            self.assertIn("required_artifact_write_failed", build["reasons"][-1])
-            self.assertIn("bundle_manifest_sha256", build["reasons"][-1])
-            self.assertIsNone(build["bundle_manifest_sha256"])
+                self.assertEqual(build["status"], "blocked")
+                self.assertEqual(build["stages"]["finalize"], "failed")
+                self.assertIn("required_artifact_write_failed", build["reasons"][-1])
+                self.assertIn("bundle_manifest_sha256", build["reasons"][-1])
+                self.assertIsNone(build["bundle_manifest_sha256"])
+                # The written Chinese report itself must show the final blocked
+                # state, not a stale ready.
+                report = Path(build["build_report_path"]).read_text(encoding="utf-8")
+                self.assertIn("构建状态：`blocked`", report)
+                self.assertNotIn("构建状态：`ready`", report)
+                self.assertIn("- `finalize`：`failed`", report)
+                self.assertIn("required_artifact_write_failed", report)
+                self.assertIn("bundle_manifest_sha256", report)
+                stderr = io_module.StringIO()
+                stdout = io_module.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+                    with self.assertRaises(SystemExit) as cli_exit:
+                        main(
+                            [
+                                "runtime-bundle-build",
+                                "--snapshot-manifest", str(built["snapshot_manifest_path"]),
+                                "--issue-audit", str(issue_path),
+                                "--output-root", str(root / "jobs-cli"),
+                            ]
+                        )
+                self.assertEqual(cli_exit.exception.code, 1)
+                self.assertIn("required_artifact_write_failed", stdout.getvalue())
+                self.assertIn("bundle_manifest_sha256", stderr.getvalue())
+                self.assertIn("could not be persisted", stderr.getvalue())
             job = json.loads(Path(build["build_job_path"]).read_text(encoding="utf-8"))
             self.assertEqual(job["status"], "blocked")
+            self.assertEqual(job["stages"]["finalize"], "failed")
             self.assertIsNone(job["bundle_manifest_sha256"])
+            self.assertTrue(job["output_write_errors"])
+            self.assertIn("构建状态：`blocked`", Path(build["build_report_path"]).read_text(encoding="utf-8"))
 
     def _sync_catalog(self, bundle_root: Path, mutate_files) -> None:
         def mutate(payload):
@@ -1593,6 +1630,109 @@ class BundleReworkTests(RuntimeBundleTestBase):
                 any("normalization" in reason for reason in verification["reasons"]),
                 verification["reasons"],
             )
+
+    def test_ready_build_report_matches_json_state(self):
+        """Control: a normal ready build writes a consistent ready report/JSON."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = self._build_bundle(root, "frequency")
+            self.assertEqual(build["status"], "ready")
+            report = Path(build["build_report_path"]).read_text(encoding="utf-8")
+            self.assertIn("构建状态：`ready`", report)
+            self.assertNotIn("构建状态：`blocked`", report)
+            self.assertIn("- `finalize`：`completed`", report)
+            self.assertNotIn("required_artifact_write_failed", report)
+            job = json.loads(Path(build["build_job_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(job["status"], "ready")
+            self.assertEqual(job["stages"]["finalize"], "completed")
+            self.assertEqual(job["output_write_errors"], [])
+            self.assertTrue(Path(build["bundle_dir"], "bundle_manifest.json").is_file())
+
+    def test_finalize_size_inventory_failure_blocks_report_and_job(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+
+            def failing_total(bundle_dir):
+                raise PermissionError("simulated finalize size inventory failure")
+
+            with patch.object(
+                runtime_bundle_module, "_bundle_total_bytes", side_effect=failing_total
+            ):
+                build = build_runtime_bundle(
+                    built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
+                )
+            self.assertEqual(build["status"], "blocked")
+            self.assertEqual(build["stages"]["finalize"], "failed")
+            self.assertIn("required_artifact_write_failed", build["reasons"][-1])
+            self.assertIn("bundle_size_inventory", build["reasons"][-1])
+            self.assertIsNone(build["total_bytes"])
+            report = Path(build["build_report_path"]).read_text(encoding="utf-8")
+            self.assertIn("构建状态：`blocked`", report)
+            self.assertNotIn("构建状态：`ready`", report)
+            self.assertIn("- `finalize`：`failed`", report)
+            self.assertIn("bundle_size_inventory", report)
+            job = json.loads(Path(build["build_job_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(job["status"], "blocked")
+            self.assertEqual(job["stages"]["finalize"], "failed")
+            self.assertIsNone(job["total_bytes"])
+            self.assertTrue(any("bundle_size_inventory" in e for e in job["output_write_errors"]))
+            candidate = verify_runtime_bundle(Path(build["bundle_dir"]) / "bundle_manifest.json")
+            self.assertEqual(candidate["status"], "ready", candidate["reasons"])
+
+    def test_job_and_report_both_unwritable_raise_with_artifact_diagnosis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = self._build_snapshot(root, "frequency")
+            issue_path = self._fresh_issue_evidence(root, built)
+            real_write = runtime_bundle_module._write_utf8_text
+            real_write_json = runtime_bundle_module.write_json
+
+            def failing_write(path, text):
+                if Path(path).name == "build_report.md":
+                    raise PermissionError("simulated report failure")
+                return real_write(path, text)
+
+            def failing_job_write(payload, path, *args, **kwargs):
+                if Path(str(path)).name == "build_job.json":
+                    raise PermissionError("simulated job failure")
+                return real_write_json(payload, path, *args, **kwargs)
+
+            with patch.object(
+                runtime_bundle_module, "_write_utf8_text", side_effect=failing_write
+            ), patch.object(
+                runtime_bundle_module, "write_json", side_effect=failing_job_write
+            ):
+                with self.assertRaises(OSError) as raised:
+                    build_runtime_bundle(
+                        built["snapshot_manifest_path"], issue_path, output_root=root / "jobs"
+                    )
+                message = str(raised.exception)
+                self.assertIn("build job record", message)
+                self.assertIn("build_report", message)
+                self.assertIn("could NOT be updated either", message)
+                self.assertIn("must not be treated as the final delivery", message)
+                self.assertIn("remain on disk", message)
+                stderr = io_module.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io_module.StringIO()):
+                    with self.assertRaises(SystemExit) as cli_exit:
+                        main(
+                            [
+                                "runtime-bundle-build",
+                                "--snapshot-manifest", str(built["snapshot_manifest_path"]),
+                                "--issue-audit", str(issue_path),
+                                "--output-root", str(root / "jobs-cli"),
+                            ]
+                        )
+                self.assertEqual(cli_exit.exception.code, 1)
+                self.assertIn("must not be treated as the final delivery", stderr.getvalue())
+            job_dirs = list((root / "jobs").iterdir())
+            self.assertTrue(job_dirs)
+            self.assertFalse((job_dirs[0] / "build_job.json").exists())
+            self.assertFalse((job_dirs[0] / "build_report.md").exists())
+            self.assertTrue((job_dirs[0] / "bundle" / "bundle_manifest.json").is_file())
 
 
 if __name__ == "__main__":
