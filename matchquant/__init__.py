@@ -1,13 +1,20 @@
-"""MatchQuant M1-M12: deterministic football research and local forecasts.
+"""MatchQuant M1–M12: deterministic football research and local forecasts.
 
-Public exports are resolved lazily (PEP 562 module ``__getattr__``) so that
-importing the package — including through the installed entry points — does
-not import numpy/pandas until the CLI boundary has had a chance to run its
-narrow missing-dependency diagnosis (see :mod:`matchquant.launcher`). In a
-normal environment every name in ``__all__`` still resolves exactly as before;
-``from matchquant import X`` and ``import matchquant; matchquant.X`` both work.
+Public exports are resolved lazily so that importing the package — including
+through the installed entry points — does not import numpy/pandas until the
+CLI boundary has had a chance to run its narrow missing-dependency diagnosis
+(see :mod:`matchquant.launcher`). In a normal environment every name in
+``__all__`` still resolves exactly as before, with one deliberate detail: the
+package attribute for an exported name is ALWAYS the exported object, even
+when a same-named submodule (``release_verify``) gets bound to the package by
+the import machinery after a transitive import. The custom module class below
+intercepts those attribute reads, so ``from matchquant import release_verify``
+keeps returning the original function regardless of import order — the same
+observable behavior as the original eager ``__init__``.
 """
 
+import sys
+import types
 from importlib import import_module
 from typing import Any
 
@@ -110,17 +117,39 @@ _EXPORTS: dict[str, tuple[str, str]] = {
 }
 
 
-def __getattr__(name: str) -> Any:
-    target = _EXPORTS.get(name)
-    if target is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute = target
-    value = getattr(import_module(f".{module_name}", __name__), attribute)
-    globals()[name] = value
-    return value
+def _resolve_export(name: str) -> Any:
+    module_name, attribute = _EXPORTS[name]
+    return getattr(import_module(f".{module_name}", __name__), attribute)
+
+
+class _LazyExportModule(types.ModuleType):
+    """Package module type that resolves public exports lazily.
+
+    ``__getattribute__`` (not only PEP 562 ``__getattr__``) is required because
+    importing a submodule binds that submodule as an attribute of the parent
+    package: for the exported name ``release_verify`` that binding would
+    otherwise shadow the original public function forever. Export names are
+    always resolved to their declared object and re-cached, so import order
+    cannot change the observable type or identity. Resolution is reentrant-safe:
+    ``import_module`` consults ``sys.modules`` and the import lock, so nested
+    package-attribute lookups during a transitive import degrade to plain
+    attribute reads instead of recursing.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in _EXPORTS:
+            value = _resolve_export(name)
+            object.__getattribute__(self, "__dict__")[name] = value
+            return value
+        return types.ModuleType.__getattribute__(self, name)
+
+
+sys.modules[__name__].__class__ = _LazyExportModule
 
 
 def __dir__() -> list[str]:
+    # globals() is the module dict itself; no attribute access on the module
+    # object happens here, so the custom __getattribute__ is not re-entered.
     return sorted(set(globals()) | set(_EXPORTS))
 
 

@@ -6,9 +6,12 @@ checkout. The built-wheel ZIP listing itself is additionally verified by the
 B05 acceptance script in the delivery directory.
 """
 
+import builtins
 import hashlib
 import importlib.resources
 import json
+import os
+import shutil
 import tempfile
 import unittest
 import unittest.mock as mock
@@ -365,6 +368,122 @@ class DemoExportTests(unittest.TestCase):
             self.assertIn("INCOMPLETE", notes)
             self.assertIn(str(target), notes)
             self.assertFalse((target / "demo_manifest.json").exists())
+
+
+def _materialize_temp_resources(temp_root: Path) -> Path:
+    """Copy the packaged demo payload (including the index) into a temp dir."""
+
+    demo_dir = temp_root / "demo"
+    demo_dir.mkdir(parents=True)
+    source_root = importlib.resources.files("matchquant") / "resources" / "demo"
+    index_bytes = (source_root / "demo_payload.json").read_bytes()
+    (demo_dir / "demo_payload.json").write_bytes(index_bytes)
+    for item in json.loads(index_bytes)["files"]:
+        destination = demo_dir / item["path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((source_root / item["path"]).read_bytes())
+    return demo_dir
+
+
+@unittest.skipUnless(os.name == "nt", "junction preflight checks are Windows-specific")
+class SourcePreflightTests(unittest.TestCase):
+    """R1 remaining: payload SOURCES are resolved and containment-checked before
+    any payload content is read and before the target is created."""
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.temp_root = Path(self._temp.name)
+
+    def _use_resources(self, demo_dir: Path) -> None:
+        patcher = mock.patch.object(demo_export_module, "_demo_resources", return_value=demo_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make_junction(self, link: Path, target_dir: Path) -> None:
+        result = os.system(f'mklink /J "{link}" "{target_dir}"')
+        self.assertEqual(result, 0, "mklink /J should create a junction without admin rights")
+
+    def test_junction_source_outside_resources_rejected_before_any_read(self):
+        outside = self.temp_root / "same bytes source outside resources"
+        outside.mkdir()
+        demo_dir = _materialize_temp_resources(self.temp_root / "resources")
+        evidence_dir = demo_dir / "bundle" / "evidence"
+        for entry in evidence_dir.iterdir():
+            if entry.is_file():
+                shutil.copy2(entry, outside / entry.name)
+        original_evidence = self.temp_root / "evidence_original"
+        evidence_dir.rename(original_evidence)
+        self._make_junction(evidence_dir, outside)
+        self._use_resources(demo_dir)
+
+        outside_opens: list[str] = []
+        payload_opens: list[str] = []
+        real_open = builtins.open
+        demo_prefix = str(demo_dir).lower()
+        outside_prefix = str(outside).lower()
+
+        def recording_open(file, *args, **kwargs):
+            text = str(file)
+            lowered = text.lower()
+            if lowered.startswith(outside_prefix):
+                outside_opens.append(str(Path(text).resolve()).lower())
+            elif lowered.startswith(demo_prefix) and not lowered.endswith("demo_payload.json"):
+                payload_opens.append(text)
+            return real_open(file, *args, **kwargs)
+
+        target = self.temp_root / "junction export target"
+        with mock.patch("builtins.open", side_effect=recording_open):
+            with self.assertRaises(DataValidationError) as caught:
+                export_synthetic_demo(target)
+
+        message = str(caught.exception)
+        self.assertIn("resolves outside the packaged resources", message)
+        self.assertIn(str(outside).lower(), message.lower())
+        self.assertFalse(target.exists())
+        # Preflight, not read-time: zero opens of the outside same-byte copies,
+        # and zero opens of any payload file (only the index may be read).
+        self.assertEqual(outside_opens, [])
+        self.assertEqual(payload_opens, [])
+
+    def test_junction_at_bundle_root_rejected(self):
+        outside_bundle = self.temp_root / "bundle copy outside"
+        outside_bundle.mkdir()
+        demo_dir = _materialize_temp_resources(self.temp_root / "resources2")
+        bundle_dir = demo_dir / "bundle"
+        for entry in bundle_dir.rglob("*"):
+            if entry.is_file():
+                destination = outside_bundle / entry.relative_to(bundle_dir)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(entry, destination)
+        original_bundle = self.temp_root / "bundle_original"
+        bundle_dir.rename(original_bundle)
+        self._make_junction(bundle_dir, outside_bundle)
+        self._use_resources(demo_dir)
+
+        target = self.temp_root / "bundle junction target"
+        with self.assertRaises(DataValidationError):
+            export_synthetic_demo(target)
+        self.assertFalse(target.exists())
+
+    def test_normal_temp_backed_export_succeeds(self):
+        demo_dir = _materialize_temp_resources(self.temp_root / "resources3")
+        self._use_resources(demo_dir)
+        target = self.temp_root / "normal temp export"
+        result = export_synthetic_demo(target)
+        self.assertTrue(result["synthetic"])
+        self.assertTrue((target / "demo_manifest.json").is_file())
+        bundle_files = [path for path in target.glob("bundle/**/*") if path.is_file()]
+        self.assertEqual(len(bundle_files), 8)
+
+    def test_missing_source_component_reports_missing_file(self):
+        demo_dir = _materialize_temp_resources(self.temp_root / "resources4")
+        (demo_dir / "bundle" / "team_index.json").unlink()
+        self._use_resources(demo_dir)
+        target = self.temp_root / "missing source target"
+        with self.assertRaises(FileNotFoundError):
+            export_synthetic_demo(target)
+        self.assertFalse(target.exists())
 
 
 if __name__ == "__main__":

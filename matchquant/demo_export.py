@@ -19,6 +19,10 @@ Safety contract:
   case or normalization conflicts, no duplicates), and sizes/hashes must have
   valid types. A tampered index therefore fails without creating anything and
   without reading any payload file;
+- every payload SOURCE is preflighted before any payload content is read: the
+  resources root and each source path are resolved, and any reparse point
+  (junction/symlink) in a source chain — or a resolved source outside the
+  resolved resources root — is rejected before a single payload byte is read;
 - a failure after creation (payload copy, bundle verification, or the final
   demo_manifest.json persistence) leaves the real partial directory on disk
   and raises with a message that names the stage, the actual directory, and
@@ -34,7 +38,9 @@ import hashlib
 import importlib.metadata
 import importlib.resources
 import json
+import os
 import re
+import stat
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -247,8 +253,14 @@ def _validate_payload_catalog(files: Any) -> list[dict[str, Any]]:
     return validated
 
 
+def _demo_resources() -> Any:
+    """Traversable for the packaged demo payload directory (patchable in tests)."""
+
+    return importlib.resources.files(_PAYLOAD_PACKAGE) / _PAYLOAD_DIR
+
+
 def _load_payload() -> list[dict[str, Any]]:
-    index = importlib.resources.files(_PAYLOAD_PACKAGE) / _PAYLOAD_DIR / _PAYLOAD_INDEX
+    index = _demo_resources() / _PAYLOAD_INDEX
     if not index.is_file():
         raise FileNotFoundError(
             f"the demo payload index is missing from the installed package resources: "
@@ -262,36 +274,68 @@ def _load_payload() -> list[dict[str, Any]]:
     return _validate_payload_catalog(payload.get("files"))
 
 
-def _read_payload_bytes(files: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
-    """Read and hash-check every payload file *before* the target is created.
+def _reject_reparse_source_chain(resources_root: Path, relative: str) -> None:
+    """Reject junctions/symlinks at any component of a payload source path.
 
-    Paths were already validated to strict canonical relative form, so each
-    source stays inside the packaged demo resources; the containment check is
-    repeated after resolution as defence in depth.
+    ``resources_root`` must already be resolved; the chain is walked beneath it
+    with ``os.lstat`` so a directory-joined or symlinked component (which would
+    silently redirect the actual source outside the resources root) fails the
+    preflight before any payload content is opened.
     """
 
-    demo_resources = importlib.resources.files(_PAYLOAD_PACKAGE) / _PAYLOAD_DIR
-    resources_root = Path(str(demo_resources))
-    prepared: list[tuple[str, bytes]] = []
+    current = resources_root
+    for part in relative.split("/"):
+        current = current / part
+        try:
+            link_info = os.lstat(current)
+        except OSError as exc:
+            raise FileNotFoundError(
+                f"demo payload source component '{current}' could not be inspected: {exc}"
+            ) from exc
+        if getattr(link_info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise DataValidationError(
+                f"demo payload source '{relative}' contains a junction/symlink component "
+                f"({current}); the packaged payload sources must be plain files inside the "
+                "package resources"
+            )
+
+
+def _read_payload_bytes(files: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
+    """Preflight and read every payload file *before* the target is created.
+
+    Preflight happens for ALL sources before ANY payload content is read: each
+    source is resolved and must land inside the RESOLVED resources root, and no
+    component of its chain may be a reparse point. Paths were already validated
+    to strict canonical relative form by the catalog check.
+    """
+
+    demo_resources = _demo_resources()
+    resources_root = Path(str(demo_resources)).resolve()
+    preflighted: list[tuple[str, Any, int, str]] = []
     for item in files:
         relative = str(item["path"])
-        expected_sha = str(item["sha256"])
         resource = demo_resources / relative
         if not resource.is_file():
             raise FileNotFoundError(
                 f"demo payload file '{relative}' is missing from the installed package resources"
             )
-        source_path = Path(str(resource))
-        if resources_root and not _is_within(source_path, resources_root):
+        resolved_source = Path(str(resource)).resolve()
+        if not _is_within(resolved_source, resources_root):
             raise DataValidationError(
-                f"demo payload source for '{relative}' resolves outside the packaged resources: {source_path}"
+                f"demo payload source for '{relative}' resolves outside the packaged resources: "
+                f"{resolved_source} is not inside {resources_root}"
             )
+        _reject_reparse_source_chain(resources_root, relative)
+        preflighted.append((relative, resource, int(item["size"]), str(item["sha256"])))
+
+    prepared: list[tuple[str, bytes]] = []
+    for relative, resource, expected_size, expected_sha in preflighted:
         data = resource.read_bytes()
         actual_sha = hashlib.sha256(data).hexdigest()
-        if len(data) != item["size"] or actual_sha != expected_sha:
+        if len(data) != expected_size or actual_sha != expected_sha:
             raise DataValidationError(
                 f"demo payload file '{relative}' does not match the packaged size/hash "
-                f"(expected {item['size']} bytes / {expected_sha}, found {len(data)} bytes / {actual_sha}); "
+                f"(expected {expected_size} bytes / {expected_sha}, found {len(data)} bytes / {actual_sha}); "
                 "the installed package is inconsistent"
             )
         prepared.append((relative, data))
