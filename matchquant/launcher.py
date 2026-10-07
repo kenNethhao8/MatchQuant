@@ -29,9 +29,17 @@ def _dependency_message(name: str) -> str:
     )
 
 
+def _import_cli():
+    """Import the real CLI; kept as a module function so the diagnosis branch is testable."""
+
+    from .cli import main as cli_main
+
+    return cli_main
+
+
 def main() -> None:
     try:
-        from .cli import main as cli_main
+        cli_main = _import_cli()
     except ModuleNotFoundError as exc:
         missing = (getattr(exc, "name", "") or "").split(".")[0]
         if missing not in _CORE_DEPENDENCIES:

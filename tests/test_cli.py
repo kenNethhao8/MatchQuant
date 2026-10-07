@@ -5,8 +5,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock as mock
 from pathlib import Path
 
+from matchquant import launcher
 from matchquant.cli import _parser
 
 
@@ -127,6 +129,32 @@ class CliVersionAndDemoTests(unittest.TestCase):
         self.assertNotIn("run an online walk-forward backtest", text)
         self.assertIn("not live data, not an Alpha/factor engine", text)
         self.assertIn("not calibrated probabilities", text)
+
+
+class LauncherDiagnosticsTests(unittest.TestCase):
+    def test_missing_core_dependency_gets_actionable_guidance(self):
+        with mock.patch.object(
+            launcher,
+            "_import_cli",
+            side_effect=ModuleNotFoundError("No module named 'pandas'", name="pandas"),
+        ):
+            with contextlib.redirect_stderr(io_module.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as caught:
+                    launcher.main()
+        self.assertEqual(caught.exception.code, 1)
+        text = stderr.getvalue()
+        self.assertIn("pandas", text)
+        self.assertIn("venv", text)
+        self.assertIn("--no-index --find-links", text)
+
+    def test_unknown_import_error_is_reraised_not_swallowed(self):
+        with mock.patch.object(
+            launcher,
+            "_import_cli",
+            side_effect=ModuleNotFoundError("No module named 'someother'", name="someother"),
+        ):
+            with self.assertRaises(ModuleNotFoundError):
+                launcher.main()
 
 
 if __name__ == "__main__":
