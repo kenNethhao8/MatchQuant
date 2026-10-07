@@ -26,6 +26,148 @@ def _resource_bytes(relative: str) -> bytes:
     return resource.read_bytes()
 
 
+def _catalog_entry(path: str, content: bytes = b"payload") -> dict:
+    return {"path": path, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+
+
+def _valid_catalog() -> list[dict]:
+    entries = [
+        _catalog_entry(path) for path in sorted(demo_export_module._expected_export_paths())
+    ]
+    entries += [
+        _catalog_entry(f"bundle/snapshot/m11_demo_snapshot/{leaf}")
+        for leaf in demo_export_module._SNAPSHOT_LEAF_NAMES
+    ]
+    return entries
+
+
+class PayloadCatalogValidationTests(unittest.TestCase):
+    """R1: the export catalog is strictly validated before any read or write."""
+
+    def test_valid_catalog_passes_with_eleven_entries(self):
+        validated = demo_export_module._validate_payload_catalog(_valid_catalog())
+        self.assertEqual(len(validated), 11)
+
+    def test_parent_traversal_entry_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("../../escape.txt", b"escaped")]
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("canonical relative path", str(caught.exception))
+
+    def test_absolute_windows_path_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("C:\\evil\\escape.txt", b"escaped")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_unc_path_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("\\\\server\\share\\escape.txt", b"escaped")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_ads_colon_path_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("bundle/RUN.md:stream", b"ads")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_backslash_path_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("bundle\\RUN.md", b"backslash")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_dot_component_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("bundle/./RUN.md", b"dot")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_trailing_dot_component_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("bundle/snapshot/id/manifest.", b"dot")]
+        with self.assertRaises(DataValidationError):
+            demo_export_module._validate_payload_catalog(catalog)
+
+    def test_non_string_path_rejected(self):
+        catalog = _valid_catalog()
+        catalog[0] = {"path": 5, "size": 1, "sha256": "a" * 64}
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("must be a non-empty string", str(caught.exception))
+
+    def test_exact_duplicate_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("DEMO.md", b"again")]
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("duplicate", str(caught.exception))
+
+    def test_windows_case_insensitive_duplicate_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("demo.md", b"case")]
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("case-insensitive duplicates", str(caught.exception))
+
+    def test_extra_entry_outside_fixed_set_rejected(self):
+        catalog = _valid_catalog() + [_catalog_entry("extras/free.txt", b"extra")]
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("outside the fixed export set", str(caught.exception))
+
+    def test_wrong_snapshot_leaf_shape_rejected(self):
+        catalog = _valid_catalog()
+        catalog[-1] = _catalog_entry("bundle/snapshot/m11_demo_snapshot/model_states.bak")
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("outside the fixed export set", str(caught.exception))
+
+    def test_snapshot_entries_across_two_directories_rejected(self):
+        catalog = _valid_catalog()
+        catalog[-3] = _catalog_entry("bundle/snapshot/other_id/model_states.json")
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("exactly one snapshot directory", str(caught.exception))
+
+    def test_missing_snapshot_leaf_rejected(self):
+        catalog = _valid_catalog()
+        catalog.pop()
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("snapshot payload entries", str(caught.exception))
+
+    def test_missing_required_entry_rejected(self):
+        catalog = [entry for entry in _valid_catalog() if entry["path"] != "results.csv"]
+        with self.assertRaises(DataValidationError) as caught:
+            demo_export_module._validate_payload_catalog(catalog)
+        self.assertIn("missing required export entries", str(caught.exception))
+
+    def test_bad_size_and_hash_types_rejected(self):
+        for mutate in (
+            lambda entry: {**entry, "size": "12"},
+            lambda entry: {**entry, "size": True},
+            lambda entry: {**entry, "size": -1},
+            lambda entry: {**entry, "sha256": "not-hex"},
+            lambda entry: {**entry, "sha256": 64},
+        ):
+            catalog = _valid_catalog()
+            catalog[0] = mutate(catalog[0])
+            with self.assertRaises(DataValidationError):
+                demo_export_module._validate_payload_catalog(catalog)
+
+    def test_tampered_index_rejected_before_target_creation(self):
+        # The catalog validation (with the same correct-hash escape entry the
+        # reviewer used) must fail before the target directory is created.
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "escaped export"
+            tampered = _valid_catalog() + [_catalog_entry("../../escape.txt", b"escaped")]
+            with self.assertRaises(DataValidationError):
+                demo_export_module._validate_payload_catalog(tampered)
+            with mock.patch.object(
+                demo_export_module,
+                "_load_payload",
+                side_effect=lambda: demo_export_module._validate_payload_catalog(tampered),
+            ):
+                with self.assertRaises(DataValidationError):
+                    export_synthetic_demo(target)
+            self.assertFalse(target.exists())
+            self.assertFalse((Path(temporary) / "escape.txt").exists())
+
+
 class DemoResourceTests(unittest.TestCase):
     def test_payload_index_lists_consistent_files(self):
         payload = json.loads(_resource_bytes("resources/demo/demo_payload.json"))
@@ -179,6 +321,50 @@ class DemoExportTests(unittest.TestCase):
             self.assertTrue((target / "bundle" / "extra.bin").is_file())
             self.assertFalse((target / "demo_manifest.json").exists())
             self.assertFalse((target / "bundle" / "bundle_manifest.json").exists())
+
+    def test_final_manifest_write_failure_names_stage_and_partial_directory(self):
+        # R3: an injected PermissionError on the FINAL demo_manifest.json write
+        # must produce the honest partial-export diagnosis on the real chain.
+        real_write_text = Path.write_text
+
+        def failing_write_text(self, *args, **kwargs):
+            if self.name == "demo_manifest.json":
+                raise PermissionError("injected final manifest failure")
+            return real_write_text(self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "finalize failure export"
+            with mock.patch.object(Path, "write_text", failing_write_text):
+                with self.assertRaises(DataValidationError) as caught:
+                    export_synthetic_demo(target)
+            message = str(caught.exception)
+            self.assertIn("INCOMPLETE", message)
+            self.assertIn("must not be used", message)
+            self.assertIn("demo_manifest.json", message)
+            self.assertIn(str(target), message)
+            self.assertIn("may be intact", message)  # bundle content is not declared invalid
+            exported = sorted(path.name for path in target.rglob("*") if path.is_file())
+            self.assertEqual(len(exported), 11)
+            self.assertNotIn("demo_manifest.json", exported)
+
+    def test_verify_unexpected_error_keeps_type_chain_and_note(self):
+        # An unknown programming error during verification must NOT be
+        # misclassified as a validation problem: the real exception type and
+        # chain survive, with the partial-export context attached as a note.
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "unexpected error export"
+            with mock.patch.object(
+                demo_export_module,
+                "verify_runtime_bundle",
+                side_effect=RuntimeError("unexpected engine bug"),
+            ):
+                with self.assertRaises(RuntimeError) as caught:
+                    export_synthetic_demo(target)
+            self.assertIn("unexpected engine bug", str(caught.exception))
+            notes = " ".join(getattr(caught.exception, "__notes__", []))
+            self.assertIn("INCOMPLETE", notes)
+            self.assertIn(str(target), notes)
+            self.assertFalse((target / "demo_manifest.json").exists())
 
 
 if __name__ == "__main__":

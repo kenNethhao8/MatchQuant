@@ -1,105 +1,128 @@
-"""MatchQuant M1-M12: deterministic football research and local forecasts."""
+"""MatchQuant M1-M12: deterministic football research and local forecasts.
 
-from .backtest import ModelRun, run_models, run_walk_forward
-from .calibration import calibration_diagnostics, multiclass_ece, reliability_table
-from .demo_export import export_synthetic_demo
-from .epl import (
-    DEFAULT_EPL_SEASONS,
-    audit_source_frame,
-    convert_source_frame,
-    download_epl,
-    normalize_season,
-    prepare_epl,
-    source_url,
-    stable_match_id,
-)
-from .epl_sync import audit_sync_source_frame, compare_canonical, convert_sync_source_frame, sync_epl
-from .epl_fixtures import (
-    FIXTURE_ADAPTER_VERSION,
-    FIXTURE_DIFF_VERSION,
-    FIXTURE_MANIFEST_VERSION,
-    FIXTURE_QUALITY_VERSION,
-    FIXTURE_SOURCE_REQUIRED_COLUMNS,
-    audit_fixture_source_frame,
-    compare_fixtures,
-    convert_fixture_source_frame,
-    prepare_epl_fixtures,
-    stable_fixture_id,
-)
-from .epl_local_stage import (
-    LOCAL_STAGE_ADAPTER_VERSION,
-    LOCAL_STAGE_MANIFEST_VERSION,
-    stage_local_epl_source,
-)
-from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
-from .engine_snapshot_status import (
-    ENGINE_SNAPSHOT_STATUS_SCHEMA_VERSION,
-    check_engine_snapshot_status,
-)
-from .engine_snapshot_support import (
-    ENGINE_SNAPSHOT_SCHEMA_VERSION,
-    ENGINE_STATE_SCHEMA_VERSION,
-    export_model_state,
-    import_model_state,
-    load_engine_snapshot,
-)
-from .fixtures import (
-    FIXTURE_COLUMNS,
-    FIXTURE_REQUIRED_COLUMNS,
-    FIXTURE_SCHEMA_VERSION,
-    FixtureValidationError,
-    load_fixtures,
-    validate_fixtures,
-)
-from .forecast import (
-    FORECAST_PREDICTION_COLUMNS,
-    FORECAST_SCHEMA_VERSION,
-    ForecastRun,
-    forecast_fixtures,
-    load_model_config,
-    load_selection_run_config,
-    run_forecast,
-)
-from .forecast_session import (
-    FORECAST_SESSION_SCHEMA_VERSION,
-    FORECAST_SESSION_STATUSES,
-    new_forecast_session_dir,
-    run_forecast_session,
-)
-from .postmatch_session import (
-    POSTMATCH_SESSION_SCHEMA_VERSION,
-    POSTMATCH_SESSION_STATUSES,
-    run_postmatch_session,
-)
-from .io import file_sha256, load_matches, write_json, write_predictions
-from .metrics import evaluate_predictions
-from .models import EloModel, FrequencyModel, PoissonModel, create_model
-from .prediction_evidence import load_prediction_evidence
-from .schema import DataValidationError, REQUIRED_COLUMNS, validate_matches
-from .selection import load_candidates, parse_validation_folds, run_nested_selection
-from .settlement import (
-    SETTLEMENT_METRICS_SCHEMA_VERSION,
-    SETTLEMENT_SCHEMA_VERSION,
-    load_forecast_run,
-    settle_forecast_run,
-    settle_predictions,
-)
-from .release_verify import (
-    RELEASE_STATUSES,
-    RELEASE_VERIFY_SCHEMA_VERSION,
-    release_verify,
-    verify_release,
-)
-from .runtime_bundle import build_runtime_bundle
-from .runtime_bundle_validation import RUNTIME_BUNDLE_SCHEMA_VERSION, verify_runtime_bundle
-from .snapshot_audit_support import (
-    ACTIVE_LINK_STATUS as SNAPSHOT_ACTIVE_LINK_STATUS,
-    AUDIT_SCHEMA_VERSION as SNAPSHOT_RUN_AUDIT_SCHEMA_VERSION,
-    SESSION_SCHEMA_VERSION as SNAPSHOT_SESSION_SCHEMA_VERSION,
-)
-from .snapshot_run_verify import verify_snapshot_run
-from .snapshot_session import run_snapshot_session
-from .team_index import TEAM_INDEX_SCHEMA_VERSION
+Public exports are resolved lazily (PEP 562 module ``__getattr__``) so that
+importing the package — including through the installed entry points — does
+not import numpy/pandas until the CLI boundary has had a chance to run its
+narrow missing-dependency diagnosis (see :mod:`matchquant.launcher`). In a
+normal environment every name in ``__all__`` still resolves exactly as before;
+``from matchquant import X`` and ``import matchquant; matchquant.X`` both work.
+"""
+
+from importlib import import_module
+from typing import Any
+
+_EXPORTS: dict[str, tuple[str, str]] = {
+    "ModelRun": ("backtest", "ModelRun"),
+    "run_models": ("backtest", "run_models"),
+    "run_walk_forward": ("backtest", "run_walk_forward"),
+    "calibration_diagnostics": ("calibration", "calibration_diagnostics"),
+    "multiclass_ece": ("calibration", "multiclass_ece"),
+    "reliability_table": ("calibration", "reliability_table"),
+    "export_synthetic_demo": ("demo_export", "export_synthetic_demo"),
+    "DEFAULT_EPL_SEASONS": ("epl", "DEFAULT_EPL_SEASONS"),
+    "audit_source_frame": ("epl", "audit_source_frame"),
+    "convert_source_frame": ("epl", "convert_source_frame"),
+    "download_epl": ("epl", "download_epl"),
+    "normalize_season": ("epl", "normalize_season"),
+    "prepare_epl": ("epl", "prepare_epl"),
+    "source_url": ("epl", "source_url"),
+    "stable_match_id": ("epl", "stable_match_id"),
+    "audit_sync_source_frame": ("epl_sync", "audit_sync_source_frame"),
+    "compare_canonical": ("epl_sync", "compare_canonical"),
+    "convert_sync_source_frame": ("epl_sync", "convert_sync_source_frame"),
+    "sync_epl": ("epl_sync", "sync_epl"),
+    "FIXTURE_ADAPTER_VERSION": ("epl_fixtures", "FIXTURE_ADAPTER_VERSION"),
+    "FIXTURE_DIFF_VERSION": ("epl_fixtures", "FIXTURE_DIFF_VERSION"),
+    "FIXTURE_MANIFEST_VERSION": ("epl_fixtures", "FIXTURE_MANIFEST_VERSION"),
+    "FIXTURE_QUALITY_VERSION": ("epl_fixtures", "FIXTURE_QUALITY_VERSION"),
+    "FIXTURE_SOURCE_REQUIRED_COLUMNS": ("epl_fixtures", "FIXTURE_SOURCE_REQUIRED_COLUMNS"),
+    "audit_fixture_source_frame": ("epl_fixtures", "audit_fixture_source_frame"),
+    "compare_fixtures": ("epl_fixtures", "compare_fixtures"),
+    "convert_fixture_source_frame": ("epl_fixtures", "convert_fixture_source_frame"),
+    "prepare_epl_fixtures": ("epl_fixtures", "prepare_epl_fixtures"),
+    "stable_fixture_id": ("epl_fixtures", "stable_fixture_id"),
+    "LOCAL_STAGE_ADAPTER_VERSION": ("epl_local_stage", "LOCAL_STAGE_ADAPTER_VERSION"),
+    "LOCAL_STAGE_MANIFEST_VERSION": ("epl_local_stage", "LOCAL_STAGE_MANIFEST_VERSION"),
+    "stage_local_epl_source": ("epl_local_stage", "stage_local_epl_source"),
+    "build_engine_snapshot": ("engine_snapshot", "build_engine_snapshot"),
+    "predict_from_engine_snapshot": ("engine_snapshot", "predict_from_engine_snapshot"),
+    "ENGINE_SNAPSHOT_STATUS_SCHEMA_VERSION": ("engine_snapshot_status", "ENGINE_SNAPSHOT_STATUS_SCHEMA_VERSION"),
+    "check_engine_snapshot_status": ("engine_snapshot_status", "check_engine_snapshot_status"),
+    "ENGINE_SNAPSHOT_SCHEMA_VERSION": ("engine_snapshot_support", "ENGINE_SNAPSHOT_SCHEMA_VERSION"),
+    "ENGINE_STATE_SCHEMA_VERSION": ("engine_snapshot_support", "ENGINE_STATE_SCHEMA_VERSION"),
+    "export_model_state": ("engine_snapshot_support", "export_model_state"),
+    "import_model_state": ("engine_snapshot_support", "import_model_state"),
+    "load_engine_snapshot": ("engine_snapshot_support", "load_engine_snapshot"),
+    "FIXTURE_COLUMNS": ("fixtures", "FIXTURE_COLUMNS"),
+    "FIXTURE_REQUIRED_COLUMNS": ("fixtures", "FIXTURE_REQUIRED_COLUMNS"),
+    "FIXTURE_SCHEMA_VERSION": ("fixtures", "FIXTURE_SCHEMA_VERSION"),
+    "FixtureValidationError": ("fixtures", "FixtureValidationError"),
+    "load_fixtures": ("fixtures", "load_fixtures"),
+    "validate_fixtures": ("fixtures", "validate_fixtures"),
+    "FORECAST_PREDICTION_COLUMNS": ("forecast", "FORECAST_PREDICTION_COLUMNS"),
+    "FORECAST_SCHEMA_VERSION": ("forecast", "FORECAST_SCHEMA_VERSION"),
+    "ForecastRun": ("forecast", "ForecastRun"),
+    "forecast_fixtures": ("forecast", "forecast_fixtures"),
+    "load_model_config": ("forecast", "load_model_config"),
+    "load_selection_run_config": ("forecast", "load_selection_run_config"),
+    "run_forecast": ("forecast", "run_forecast"),
+    "FORECAST_SESSION_SCHEMA_VERSION": ("forecast_session", "FORECAST_SESSION_SCHEMA_VERSION"),
+    "FORECAST_SESSION_STATUSES": ("forecast_session", "FORECAST_SESSION_STATUSES"),
+    "new_forecast_session_dir": ("forecast_session", "new_forecast_session_dir"),
+    "run_forecast_session": ("forecast_session", "run_forecast_session"),
+    "POSTMATCH_SESSION_SCHEMA_VERSION": ("postmatch_session", "POSTMATCH_SESSION_SCHEMA_VERSION"),
+    "POSTMATCH_SESSION_STATUSES": ("postmatch_session", "POSTMATCH_SESSION_STATUSES"),
+    "run_postmatch_session": ("postmatch_session", "run_postmatch_session"),
+    "file_sha256": ("io", "file_sha256"),
+    "load_matches": ("io", "load_matches"),
+    "write_json": ("io", "write_json"),
+    "write_predictions": ("io", "write_predictions"),
+    "evaluate_predictions": ("metrics", "evaluate_predictions"),
+    "EloModel": ("models", "EloModel"),
+    "FrequencyModel": ("models", "FrequencyModel"),
+    "PoissonModel": ("models", "PoissonModel"),
+    "create_model": ("models", "create_model"),
+    "load_prediction_evidence": ("prediction_evidence", "load_prediction_evidence"),
+    "DataValidationError": ("schema", "DataValidationError"),
+    "REQUIRED_COLUMNS": ("schema", "REQUIRED_COLUMNS"),
+    "validate_matches": ("schema", "validate_matches"),
+    "load_candidates": ("selection", "load_candidates"),
+    "parse_validation_folds": ("selection", "parse_validation_folds"),
+    "run_nested_selection": ("selection", "run_nested_selection"),
+    "SETTLEMENT_METRICS_SCHEMA_VERSION": ("settlement", "SETTLEMENT_METRICS_SCHEMA_VERSION"),
+    "SETTLEMENT_SCHEMA_VERSION": ("settlement", "SETTLEMENT_SCHEMA_VERSION"),
+    "load_forecast_run": ("settlement", "load_forecast_run"),
+    "settle_forecast_run": ("settlement", "settle_forecast_run"),
+    "settle_predictions": ("settlement", "settle_predictions"),
+    "RELEASE_STATUSES": ("release_verify", "RELEASE_STATUSES"),
+    "RELEASE_VERIFY_SCHEMA_VERSION": ("release_verify", "RELEASE_VERIFY_SCHEMA_VERSION"),
+    "release_verify": ("release_verify", "release_verify"),
+    "verify_release": ("release_verify", "verify_release"),
+    "build_runtime_bundle": ("runtime_bundle", "build_runtime_bundle"),
+    "RUNTIME_BUNDLE_SCHEMA_VERSION": ("runtime_bundle_validation", "RUNTIME_BUNDLE_SCHEMA_VERSION"),
+    "verify_runtime_bundle": ("runtime_bundle_validation", "verify_runtime_bundle"),
+    "SNAPSHOT_ACTIVE_LINK_STATUS": ("snapshot_audit_support", "ACTIVE_LINK_STATUS"),
+    "SNAPSHOT_RUN_AUDIT_SCHEMA_VERSION": ("snapshot_audit_support", "AUDIT_SCHEMA_VERSION"),
+    "SNAPSHOT_SESSION_SCHEMA_VERSION": ("snapshot_audit_support", "SESSION_SCHEMA_VERSION"),
+    "verify_snapshot_run": ("snapshot_run_verify", "verify_snapshot_run"),
+    "run_snapshot_session": ("snapshot_session", "run_snapshot_session"),
+    "TEAM_INDEX_SCHEMA_VERSION": ("team_index", "TEAM_INDEX_SCHEMA_VERSION"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    value = getattr(import_module(f".{module_name}", __name__), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))
+
 
 __all__ = [
     "DataValidationError",

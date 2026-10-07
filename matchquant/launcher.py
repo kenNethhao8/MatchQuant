@@ -1,24 +1,31 @@
 """Installed-entry boundary for the MatchQuant CLI with narrow dependency diagnostics.
 
 The console script (``matchquant``) and ``python -m matchquant`` both enter
-through :func:`main`. Its only addition over calling
-:mod:`matchquant.cli` directly is a narrow, honest diagnosis when numpy or
-pandas cannot be imported from the running interpreter: instead of a bare
-traceback, it points the user at the correct venv and the documented offline
-install steps. Any other import error is re-raised unchanged; nothing else is
-caught, and the CLI import architecture is untouched.
+through :func:`main`. Because the package ``__init__`` is lazy (PEP 562), the
+first heavy numpy/pandas import happens inside :func:`_import_cli` — after the
+narrow boundary checks here:
+
+1. a ``find_spec`` precheck locates numpy/pandas without importing them, so a
+   missing core dependency is diagnosed before any real import runs;
+2. if the location check passed but the actual import still fails, the
+   exception chain is inspected for a :class:`ModuleNotFoundError` naming a
+   core dependency (pandas wraps a missing numpy as a plain ``ImportError``);
+3. anything else is re-raised unchanged: unknown import errors keep their real
+   type and chain, and no other programming error is misdiagnosed.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 
 _CORE_DEPENDENCIES = ("numpy", "pandas")
 
 
-def _dependency_message(name: str) -> str:
+def _dependency_message(missing: list[str]) -> str:
     return (
-        f"MatchQuant cannot import its core dependency '{name}' from this Python interpreter.\n"
+        f"MatchQuant cannot import its core dependenc{'y' if len(missing) == 1 else 'ies'} "
+        f"from this Python interpreter: {', '.join(missing)}.\n"
         "This usually means the wrong interpreter is running (not the project venv), or the\n"
         "offline installation step was never run in this environment.\n"
         "Fix: run MatchQuant with the venv interpreter created from the delivery, and repeat the\n"
@@ -27,6 +34,32 @@ def _dependency_message(name: str) -> str:
         "matchquant==0.1.0\n"
         "See the '安装' / 'Quick start' section of the MatchQuant README for the exact steps."
     )
+
+
+def _missing_core_dependencies() -> list[str]:
+    missing: list[str] = []
+    for name in _CORE_DEPENDENCIES:
+        try:
+            located = importlib.util.find_spec(name)
+        except ImportError:
+            missing.append(name)
+            continue
+        if located is None:
+            missing.append(name)
+    return missing
+
+
+def _core_dependency_in_chain(exc: BaseException) -> str | None:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ModuleNotFoundError):
+            root = (getattr(current, "name", "") or "").split(".")[0]
+            if root in _CORE_DEPENDENCIES:
+                return root
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _import_cli():
@@ -38,13 +71,17 @@ def _import_cli():
 
 
 def main() -> None:
+    missing = _missing_core_dependencies()
+    if missing:
+        print(_dependency_message(missing), file=sys.stderr)
+        raise SystemExit(1)
     try:
         cli_main = _import_cli()
-    except ModuleNotFoundError as exc:
-        missing = (getattr(exc, "name", "") or "").split(".")[0]
-        if missing not in _CORE_DEPENDENCIES:
+    except ImportError as exc:
+        culprit = _core_dependency_in_chain(exc)
+        if culprit is None:
             raise
-        print(_dependency_message(missing), file=sys.stderr)
+        print(_dependency_message([culprit]), file=sys.stderr)
         raise SystemExit(1) from None
     cli_main()
 

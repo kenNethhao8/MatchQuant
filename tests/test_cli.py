@@ -147,6 +147,33 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         self.assertIn("venv", text)
         self.assertIn("--no-index --find-links", text)
 
+    def test_precheck_diagnoses_before_any_cli_import(self):
+        # find_spec reports the dependency missing: the diagnosis must happen
+        # before _import_cli is ever called (lazy package boundary, R2).
+        with mock.patch.object(launcher, "_import_cli", side_effect=AssertionError("cli imported too early")):
+            with mock.patch.object(launcher.importlib.util, "find_spec", return_value=None):
+                with contextlib.redirect_stderr(io_module.StringIO()) as stderr:
+                    with self.assertRaises(SystemExit) as caught:
+                        launcher.main()
+        self.assertEqual(caught.exception.code, 1)
+        text = stderr.getvalue()
+        self.assertIn("numpy", text)
+        self.assertIn("pandas", text)
+        self.assertIn("--no-index --find-links", text)
+
+    def test_pandas_wrapped_numpy_importerror_is_diagnosed_via_chain(self):
+        cause = ModuleNotFoundError("No module named 'numpy'", name="numpy")
+        wrapped = ImportError("Error importing pandas; numpy may be missing")
+        wrapped.__cause__ = cause
+        with mock.patch.object(launcher, "_import_cli", side_effect=wrapped):
+            with contextlib.redirect_stderr(io_module.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as caught:
+                    launcher.main()
+        self.assertEqual(caught.exception.code, 1)
+        text = stderr.getvalue()
+        self.assertIn("numpy", text)
+        self.assertIn("--no-index --find-links", text)
+
     def test_unknown_import_error_is_reraised_not_swallowed(self):
         with mock.patch.object(
             launcher,
@@ -155,6 +182,30 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         ):
             with self.assertRaises(ModuleNotFoundError):
                 launcher.main()
+
+    def test_unknown_importerror_without_core_chain_is_reraised(self):
+        with mock.patch.object(
+            launcher,
+            "_import_cli",
+            side_effect=ImportError("some unrelated import failure"),
+        ):
+            with self.assertRaises(ImportError):
+                launcher.main()
+
+
+class LazyPackageExportTests(unittest.TestCase):
+    def test_all_public_exports_resolve_through_lazy_getattr(self):
+        import matchquant
+
+        for name in matchquant.__all__:
+            try:
+                getattr(matchquant, name)
+            except AttributeError as exc:  # pragma: no cover - failure path
+                raise AssertionError(f"public export {name!r} does not resolve: {exc}") from exc
+        exported = set(matchquant.__dir__())
+        self.assertTrue(set(matchquant.__all__).issubset(exported))
+        with self.assertRaises(AttributeError):
+            matchquant.definitely_not_an_export
 
 
 if __name__ == "__main__":

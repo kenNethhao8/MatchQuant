@@ -12,10 +12,18 @@ Safety contract:
 - creation is refused (before any file is written) when the target already
   exists or lies inside the formal roots, the package/site-packages tree, the
   source checkout, or the demo payload resources;
-- every payload file is read and hash-checked *before* the target directory is
-  created, so payload problems leave no partial export;
-- a failure after creation leaves the real partial directory on disk and raises
-  with a message that says the export is incomplete and must not be used;
+- the payload index is fully validated BEFORE any payload file is read and
+  BEFORE the target directory is created: the export set is fixed to the
+  11 packaged payloads, every path must be a real string in strict canonical
+  relative form (no absolute/drive/UNC/parent/ADS/backslash forms, no Windows
+  case or normalization conflicts, no duplicates), and sizes/hashes must have
+  valid types. A tampered index therefore fails without creating anything and
+  without reading any payload file;
+- a failure after creation (payload copy, bundle verification, or the final
+  demo_manifest.json persistence) leaves the real partial directory on disk
+  and raises with a message that names the stage, the actual directory, and
+  says the export is INCOMPLETE and must not be used; unknown programming
+  errors keep their real exception type and chain;
 - the exported bundle is re-verified with ``verify_runtime_bundle`` before the
   final ``demo_manifest.json`` is written and success is announced.
 """
@@ -26,8 +34,9 @@ import hashlib
 import importlib.metadata
 import importlib.resources
 import json
+import re
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .io import file_sha256  # noqa: F401  (re-exported convenience for scripts)
@@ -43,6 +52,22 @@ FORMAL_RUNS_ROOT = Path(r"D:\Codex\matchquant_runs")
 _PAYLOAD_PACKAGE = "matchquant.resources"
 _PAYLOAD_DIR = "demo"
 _PAYLOAD_INDEX = "demo_payload.json"
+
+# The export set is fixed: 8 bundle payloads (B04 fixed structure) plus the
+# three standalone demo files. The catalog may not add, remove, duplicate, or
+# re-point any of them.
+_TOP_FIXED_PATHS = ("DEMO.md", "fixtures.csv", "results.csv")
+_BUNDLE_FIXED_PATHS = (
+    "bundle/RUN.md",
+    "bundle/bundle_manifest.json",
+    "bundle/team_index.json",
+    "bundle/evidence/issue_audit.json",
+    "bundle/evidence/original_snapshot_manifest.json",
+)
+_SNAPSHOT_LEAF_NAMES = ("model_states.json", "snapshot_manifest.json", "snapshot_report.md")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+_EXPECTED_EXPORT_ERRORS = (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError)
 
 
 def _is_within(child: Path, parent: Path) -> bool:
@@ -67,6 +92,161 @@ def _protected_roots() -> list[tuple[Path, str]]:
     ]
 
 
+def _validate_relative_payload_path(value: Any) -> str:
+    """Validate one catalog path as a strict canonical relative POSIX form.
+
+    Anything that is not a plain string, or that could escape the target or the
+    packaged resources (absolute, drive/UNC, parent components, ADS colons,
+    backslashes, empty/`.`/`..` components, trailing dots/spaces, or a
+    non-canonical spelling) is rejected before anything is read or created.
+    """
+
+    if not isinstance(value, str) or not value:
+        raise DataValidationError(
+            f"demo payload path must be a non-empty string, got {value!r}; "
+            "the installed package payload index is inconsistent"
+        )
+    if "\\" in value:
+        raise DataValidationError(
+            f"demo payload path must use forward separators only, got {value!r}"
+        )
+    if ":" in value:
+        raise DataValidationError(
+            f"demo payload path must not contain drive/ADS colons, got {value!r}"
+        )
+    windows_view = PureWindowsPath(value)
+    if windows_view.is_absolute() or windows_view.drive:
+        raise DataValidationError(
+            f"demo payload path must be relative without drive/UNC prefix, got {value!r}"
+        )
+    parts = value.split("/")
+    for part in parts:
+        if part in ("", ".", ".."):
+            raise DataValidationError(
+                f"demo payload path must be a canonical relative path without empty, '.', "
+                f"or '..' components, got {value!r}"
+            )
+        if part != part.strip() or part.endswith("."):
+            raise DataValidationError(
+                f"demo payload path components must not have trailing dots/spaces, got {value!r}"
+            )
+    if PurePosixPath(value).as_posix() == value:
+        return value
+    raise DataValidationError(
+        f"demo payload path is not in canonical relative form, got {value!r}"
+    )
+
+
+def _validated_snapshot_leaf(path: str) -> tuple[str, str]:
+    parts = path.split("/")
+    if len(parts) != 4:
+        raise DataValidationError(
+            f"snapshot payload path must be bundle/snapshot/<snapshot_id>/<leaf>, got {path!r}"
+        )
+    if parts[0] != "bundle" or parts[1] != "snapshot":
+        raise DataValidationError(
+            f"snapshot payload path must start with bundle/snapshot/, got {path!r}"
+        )
+    leaf = parts[3]
+    if leaf not in _SNAPSHOT_LEAF_NAMES:
+        raise DataValidationError(
+            f"snapshot payload leaf must be one of {', '.join(_SNAPSHOT_LEAF_NAMES)}, got {path!r}"
+        )
+    return parts[2], leaf
+
+
+def _is_snapshot_payload_path(path: str) -> bool:
+    parts = path.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == "bundle"
+        and parts[1] == "snapshot"
+        and parts[2] != ""
+        and parts[3] in _SNAPSHOT_LEAF_NAMES
+    )
+
+
+def _expected_export_paths() -> set[str]:
+    return set(_TOP_FIXED_PATHS) | set(_BUNDLE_FIXED_PATHS)
+
+
+def _validate_payload_catalog(files: Any) -> list[dict[str, Any]]:
+    """Validate the whole export catalog: types, paths, and the fixed 11-file set."""
+
+    if not isinstance(files, list) or not files:
+        raise DataValidationError(
+            "demo payload catalog must be a non-empty list; the installed package is inconsistent"
+        )
+    seen_paths: set[str] = set()
+    seen_casefold: dict[str, str] = {}
+    validated: list[dict[str, Any]] = []
+    for item in files:
+        if not isinstance(item, dict):
+            raise DataValidationError(
+                f"demo payload entry must be an object, got {type(item).__name__}"
+            )
+        path = _validate_relative_payload_path(item.get("path"))
+        if path in seen_paths:
+            raise DataValidationError(f"demo payload catalog contains a duplicate path: {path!r}")
+        casefolded = path.casefold()
+        if casefolded in seen_casefold:
+            raise DataValidationError(
+                f"demo payload catalog contains Windows case-insensitive duplicates: "
+                f"{seen_casefold[casefolded]!r} and {path!r}"
+            )
+        seen_paths.add(path)
+        seen_casefold[casefolded] = path
+        size = item.get("size")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise DataValidationError(
+                f"demo payload size must be a non-negative integer, got {size!r} for {path!r}"
+            )
+        sha256_value = item.get("sha256")
+        if not isinstance(sha256_value, str) or not _SHA256_PATTERN.fullmatch(sha256_value):
+            raise DataValidationError(
+                f"demo payload sha256 must be a 64-hex-character string, got {sha256_value!r} for {path!r}"
+            )
+        validated.append({"path": path, "size": size, "sha256": sha256_value})
+
+    expected_fixed = _expected_export_paths()
+    catalog = set(seen_paths)
+    missing = sorted(expected_fixed - catalog)
+    if missing:
+        raise DataValidationError(
+            "demo payload catalog is missing required export entries: " + ", ".join(missing)
+        )
+    snapshot_paths = sorted(catalog - expected_fixed)
+    malformed = [path for path in snapshot_paths if not _is_snapshot_payload_path(path)]
+    if malformed:
+        raise DataValidationError(
+            "demo payload catalog lists entries outside the fixed export set: "
+            + ", ".join(malformed)
+        )
+    if len(snapshot_paths) != len(_SNAPSHOT_LEAF_NAMES):
+        raise DataValidationError(
+            f"demo payload catalog must contain exactly {len(_SNAPSHOT_LEAF_NAMES)} snapshot "
+            f"payload entries, found {len(snapshot_paths)}"
+        )
+    snapshot_ids: set[str] = set()
+    snapshot_leaves: dict[str, set[str]] = {}
+    for path in snapshot_paths:
+        snapshot_id, leaf = _validated_snapshot_leaf(path)
+        snapshot_ids.add(snapshot_id)
+        snapshot_leaves.setdefault(snapshot_id, set()).add(leaf)
+    if len(snapshot_ids) != 1:
+        raise DataValidationError(
+            "demo payload catalog must contain exactly one snapshot directory, found: "
+            + ", ".join(sorted(snapshot_ids) or ["none"])
+        )
+    (snapshot_id,) = tuple(snapshot_ids)
+    if snapshot_leaves[snapshot_id] != set(_SNAPSHOT_LEAF_NAMES):
+        raise DataValidationError(
+            f"snapshot payload directory {snapshot_id!r} must contain exactly "
+            f"{', '.join(_SNAPSHOT_LEAF_NAMES)}"
+        )
+    return validated
+
+
 def _load_payload() -> list[dict[str, Any]]:
     index = importlib.resources.files(_PAYLOAD_PACKAGE) / _PAYLOAD_DIR / _PAYLOAD_INDEX
     if not index.is_file():
@@ -79,18 +259,19 @@ def _load_payload() -> list[dict[str, Any]]:
         raise DataValidationError(
             "the demo payload index has an unexpected schema; the installed package is inconsistent"
         )
-    files = payload.get("files")
-    if not isinstance(files, list) or not files:
-        raise DataValidationError(
-            "the demo payload index lists no files; the installed package is inconsistent"
-        )
-    return files
+    return _validate_payload_catalog(payload.get("files"))
 
 
 def _read_payload_bytes(files: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
-    """Read and hash-check every payload file *before* the target is created."""
+    """Read and hash-check every payload file *before* the target is created.
+
+    Paths were already validated to strict canonical relative form, so each
+    source stays inside the packaged demo resources; the containment check is
+    repeated after resolution as defence in depth.
+    """
 
     demo_resources = importlib.resources.files(_PAYLOAD_PACKAGE) / _PAYLOAD_DIR
+    resources_root = Path(str(demo_resources))
     prepared: list[tuple[str, bytes]] = []
     for item in files:
         relative = str(item["path"])
@@ -100,12 +281,18 @@ def _read_payload_bytes(files: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
             raise FileNotFoundError(
                 f"demo payload file '{relative}' is missing from the installed package resources"
             )
+        source_path = Path(str(resource))
+        if resources_root and not _is_within(source_path, resources_root):
+            raise DataValidationError(
+                f"demo payload source for '{relative}' resolves outside the packaged resources: {source_path}"
+            )
         data = resource.read_bytes()
         actual_sha = hashlib.sha256(data).hexdigest()
-        if actual_sha != expected_sha:
+        if len(data) != item["size"] or actual_sha != expected_sha:
             raise DataValidationError(
-                f"demo payload file '{relative}' does not match the packaged hash "
-                f"(expected {expected_sha}, found {actual_sha}); the installed package is inconsistent"
+                f"demo payload file '{relative}' does not match the packaged size/hash "
+                f"(expected {item['size']} bytes / {expected_sha}, found {len(data)} bytes / {actual_sha}); "
+                "the installed package is inconsistent"
             )
         prepared.append((relative, data))
     return prepared
@@ -145,6 +332,7 @@ def export_synthetic_demo(output_dir: str | Path) -> dict[str, Any]:
             "create the parent directory first, then run demo-export again"
         )
 
+    # Full catalog validation and payload reads happen before the target exists.
     payload_files = _load_payload()
     prepared = _read_payload_bytes(payload_files)
 
@@ -158,22 +346,36 @@ def export_synthetic_demo(output_dir: str | Path) -> dict[str, Any]:
         for relative, data in prepared:
             destination = target / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if not _is_within(destination.resolve(), target):
+                raise DataValidationError(
+                    f"refusing to write outside the export target: '{relative}' resolves to "
+                    f"{destination.resolve()}"
+                )
             destination.write_bytes(data)
             written.append({"path": relative, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-    except OSError as exc:
+    except _EXPECTED_EXPORT_ERRORS as exc:
         raise DataValidationError(
-            f"demo export is INCOMPLETE and must not be used: writing a payload file failed ({exc}); "
-            f"the partial directory '{target}' is left on disk for inspection only"
+            f"demo export is INCOMPLETE and must not be used: writing payload files failed "
+            f"({exc}); the partial directory '{target}' is left on disk for inspection only"
         ) from exc
 
     bundle_manifest_path = target / "bundle" / "bundle_manifest.json"
     try:
         verification = verify_runtime_bundle(bundle_manifest_path)
-    except Exception as exc:  # converted below, never swallowed
+    except _EXPECTED_EXPORT_ERRORS as exc:
         raise DataValidationError(
             f"demo export is INCOMPLETE and must not be used: the exported bundle failed verification "
             f"({exc}); the partial directory '{target}' is left on disk for inspection only"
         ) from exc
+    except Exception as exc:
+        # Unknown programming errors are not misclassified as validation
+        # failures; the partial-export context is attached while the real
+        # exception type and chain stay intact.
+        exc.add_note(
+            f"demo export is INCOMPLETE and must not be used: an unexpected error occurred after "
+            f"writing payload files; the partial directory '{target}' is left on disk for inspection only"
+        )
+        raise
     if verification["status"] != "ready":
         raise DataValidationError(
             f"demo export is INCOMPLETE and must not be used: the exported bundle did not verify ready "
@@ -213,7 +415,15 @@ def export_synthetic_demo(output_dir: str | Path) -> dict[str, Any]:
         ],
     }
     manifest_path = target / "demo_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        raise DataValidationError(
+            f"demo export is INCOMPLETE and must not be used: the final demo_manifest.json could not be "
+            f"written ({exc}); the partial directory '{target}' is left on disk for inspection only. "
+            "The exported payload files (including the bundle) may be intact, but the demo delivery is "
+            "not complete and must not be used as-is."
+        ) from exc
 
     return {
         "demo_dir": str(target),
