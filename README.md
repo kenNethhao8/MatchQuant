@@ -633,3 +633,19 @@ python -m unittest discover -s tests -v
 ```
 
 M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11/M12 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、快照新鲜度审计、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
+
+## 当前交付状态（B07 最终交付归档）
+
+本节是交付版本口径的入口；它把"代码版本""包版本""数据版本"分开，避免混用（旧 follow-up 文档曾同时写"稳定 M1–M12"与"先执行 M11"，属状态混用）。
+
+- **交付标识**：`baseline-v0.1` research build —— 本地研究/教学软件，不是实时预测产品。
+- **代码根目录**：`D:\matchquant\worktree`。更早迁移 ZIP 里的项目副本对应旧 commit，其 M11 尚为计划 —— **旧 ZIP 属于旧代码**，不要用它覆盖本目录。
+- **Python 包版本**：`0.1.0`（wheel metadata 驱动）。`Requires-Python >=3.11` 是元数据下界；**实际验证组合只有 Windows x86-64 CPython 3.13.15 / numpy 2.3.5 / pandas 3.0.1**，其它平台与版本未验证。
+- **数据根**：`D:\Codex\matchquant_data`（数据）与 `D:\Codex\matchquant_runs`（运行产物）。二者在本机、含真实第三方数据，**许可状态未确认，不随交付包分发**。
+- **当前 active 数据版本**：`dataset_version = m2.1-epl_local_20261004T112631Z_7568acfddce5`，**4180 行**，`active_data_cutoff = 2026-05-24`。
+- **旧历史**：**3800 行**，cutoff `2025-05-25`。旧 M2 processed manifest **没有 `dataset_version` 字段**，保持原样，未手填、未伪造。
+- **本轮数据变更：无。** B07 **没有**执行 `epl-sync`、**没有** `--apply`、**没有**联网、**没有**写入上述两个正式根；active/current pointer 与最新数据状态**均未改变**。
+- **M11/M12 已实现**（不是计划）：入口见上文"M11 引擎快照"与"M12 快照新鲜度审计"各节。
+- **交付材料**：wheelhouse、源码归档、合成 demo、`release_manifest.json`、`CHECKSUMS.sha256` 与使用手册构成一个**本机**交付包，位于 `D:\matchquant\handoff\deepseek_reports\` 下 B07 轮次目录的 `package\`。最新计划入口为 `D:\matchquant\BASELINE-START-HERE.md`。
+- **未自动开启**：M13 因子 / M14 近期信息 / M15 融合校准 / M16 页面 / M17 扩展验收，全部未实现、未启动。
+- **明确限制**：历史曝光回归不是盲测；不证明未来表现、概率校准或当前数据覆盖；`research` 模式恒为 `needs_review`（退出码 2）；包无签名，SHA-256 只证明文件一致性。`fresh_at_issue` 只表示发行时关联，运行时 `active_link_status=not_checked_in_runtime`。
