@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="MatchQuant：本地优先的足球赛果研究引擎，用可复核的模型、时间安全验证和实验性因子构建设计依据。">
+  <meta name="description" content="MatchQuant 是本地运行的足球赛果研究工具。它用历史频率、球队 Elo 和 Poisson 模型估计 1X2 概率，再按时间顺序比较模型。每次研究保留所用数据版本和结果，方便复核。">
   <meta name="theme-color" content="#080b0b">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -127,7 +127,7 @@
     <div class="hero-content">
       <p class="hero-eyebrow"><span class="live-dot"></span>LOCAL FIRST &nbsp;·&nbsp; EVIDENCE BEFORE ESTIMATES</p>
       <h1 id="hero-title"><span class="headline-one">赛果研究，</span><span class="headline-two">从证据开始。</span></h1>
-      <p class="hero-description">从历史基准、球队强弱与进失球结构，到严格按时间推进的验证。MatchQuant 把每一步留成可复核的本地研究产物。</p>
+      <p class="hero-description">MatchQuant 根据历史赛果、球队强弱和进球数据估计胜平负概率，再用按时间推进的回测比较模型。</p>
       <div class="hero-actions">
         <a class="button-primary" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">查看开源仓库 <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
         <a class="button-ghost" href="#method">了解研究方法</a>
@@ -135,7 +135,7 @@
     </div>
     <div class="hero-index" aria-hidden="true">MATCHQUANT&nbsp; / &nbsp;RESEARCH ENGINE</div>
     <div class="hero-foot">
-      <p class="foot-note"><strong>ONE MATCH · MANY SIGNALS</strong>概率有依据，判断有边界。计算在本地完成，结果留给你复核。</p>
+      <p class="foot-note"><strong>ONE MATCH · MANY SIGNALS</strong>每次研究所用的数据、参数和结果都保留在本地，方便复核。</p>
       <div class="foot-meta"><span>HISTORICAL DATA</span><span>·</span><span>PYTHON CLI</span><span>·</span><span>AGENT OPTIONAL</span><span class="scroll-mark"><i class="scroll-line"></i>SCROLL TO EXPLORE</span></div>
     </div>
   </section>
@@ -143,33 +143,33 @@
     <section class="content-section" id="method" aria-labelledby="method-title">
       <div class="wrap">
         <div class="section-head">
-          <div><p class="section-kicker">FROM HISTORY TO REVIEW</p><h2 id="method-title">一场比赛的判断，<br>要走过一条<em>可回看的路径。</em></h2></div>
-          <p class="section-lede">比赛不会因为模型变得确定。MatchQuant 做的是把每一步的输入、时间边界和计算依据留清楚，让赛前估计能够被检查，赛后结果能够被复盘。</p>
+          <div><p class="section-kicker">FROM HISTORY TO REVIEW</p><h2 id="method-title">赛前估计的依据，<br>赛后可以<em>从记录中回看。</em></h2></div>
+          <p class="section-lede">MatchQuant 会记录每次估计用了哪些数据、数据截至何时，以及模型如何计算。你可以检查赛前快照，赛后再把估计与实际赛果对照。</p>
         </div>
         <div class="path-line" role="list" aria-label="MatchQuant 研究流程">
-          <article class="path-step" role="listitem"><div class="step-top"><span>01 / INPUT</span><i class="step-node"></i></div><h3>先固定可用证据</h3><p>读取用户指定的本地历史、赛程、版本清单和模型配置，记录数据截止日期与文件摘要。</p><span class="mini-label">LOCAL DATA · EXPLICIT AS-OF</span></article>
-          <article class="path-step" role="listitem"><div class="step-top"><span>02 / MODEL</span><i class="step-node"></i></div><h3>并行看三种基线</h3><p>历史结果频率、球队 Elo 强度、进球 Poisson 结构，分别刻画不同的赛果信号。</p><span class="mini-label">FREQUENCY · ELO · POISSON</span></article>
-          <article class="path-step" role="listitem"><div class="step-top"><span>03 / VALIDATE</span><i class="step-node"></i></div><h3>按时间向前验证</h3><p>每折只使用当时已经发生的比赛；同一时间批次先预测再更新，最终测试段不用于选模。</p><span class="mini-label">WALK FORWARD · NO LEAKAGE</span></article>
-          <article class="path-step" role="listitem"><div class="step-top"><span>04 / REVIEW</span><i class="step-node"></i></div><h3>留下可复核产物</h3><p>生成预测快照、报告、manifest 与哈希，再接上赛后结算和状态检查。</p><span class="mini-label">SNAPSHOT · AUDIT · SETTLEMENT</span></article>
+          <article class="path-step" role="listitem"><div class="step-top"><span>01 / INPUT</span><i class="step-node"></i></div><h3>先确定数据范围</h3><p>你指定本地历史数据、赛程和模型配置。MatchQuant 记录数据截止日期、文件摘要和版本信息。</p><span class="mini-label">LOCAL DATA · EXPLICIT AS-OF</span></article>
+          <article class="path-step" role="listitem"><div class="step-top"><span>02 / MODEL</span><i class="step-node"></i></div><h3>比较三种基线模型</h3><p>Frequency 用平滑后的历史频率，Elo 估计球队相对强度，Poisson 根据攻防数据估计进球分布。</p><span class="mini-label">FREQUENCY · ELO · POISSON</span></article>
+          <article class="path-step" role="listitem"><div class="step-top"><span>03 / VALIDATE</span><i class="step-node"></i></div><h3>按时间向前验证</h3><p>每一折只使用该时点之前的比赛。同一时间批次先完成全部预测，再更新模型；最终测试段只用于评估，不参与选模。</p><span class="mini-label">WALK FORWARD · NO LEAKAGE</span></article>
+          <article class="path-step" role="listitem"><div class="step-top"><span>04 / REVIEW</span><i class="step-node"></i></div><h3>保存预测和研究记录</h3><p>保存预测快照、报告、manifest 和文件哈希，赛后再做结算与状态检查。</p><span class="mini-label">SNAPSHOT · AUDIT · SETTLEMENT</span></article>
         </div>
-        <p class="path-caption">A PROBABILITY ESTIMATE IS A TRACEABLE CLAIM, NOT A PROMISE.</p>
+        <p class="path-caption">PROBABILITY ESTIMATES BUILT FROM TRACEABLE INPUTS</p>
       </div>
     </section>
 
     <section class="content-section alt" id="models" aria-labelledby="models-title">
       <div class="wrap">
         <div class="section-head">
-          <div><p class="section-kicker">THREE COMPLEMENTARY BASELINES</p><h2 id="models-title">不是一个黑盒，<br>而是三种<em>可解释的起点。</em></h2></div>
-          <p class="section-lede">模型不直接“知道”比赛会怎样。它们从历史中提取不同信息，再把结果表达成主胜、平局、客胜的概率估计。比较之前，先看清每一种信号来自哪里。</p>
+          <div><p class="section-kicker">THREE COMPLEMENTARY BASELINES</p><h2 id="models-title">三种基线，<br>各自回答一个<em>问题。</em></h2></div>
+          <p class="section-lede">Frequency、Elo 和 Poisson 分别利用历史赛果、球队强度和进球结构，估计主胜、平局与客胜概率。每种模型的输入和计算方式都可以查看。</p>
         </div>
         <div class="models-grid">
-          <article class="model-card"><div class="model-top"><span>MODEL 01</span><span class="model-sigil">F</span></div><h3>Frequency</h3><p>用平滑后的历史主胜、平局与客胜频率建立基线。它回答的是：在这份历史样本里，三类结果各自出现得有多常见？</p><div class="model-foot"><span>HISTORICAL PRIOR</span><strong>H / D / A</strong></div></article>
-          <article class="model-card"><div class="model-top"><span>MODEL 02</span><span class="model-sigil">E</span></div><h3>Elo</h3><p>随比赛更新球队强度，并纳入主场优势与显式平局概率。它回答的是：两队进入这场比赛前，历史表现形成的相对强度如何？</p><div class="model-foot"><span>TEAM STRENGTH</span><strong>PRE-MATCH STATE</strong></div></article>
-          <article class="model-card"><div class="model-top"><span>MODEL 03</span><span class="model-sigil">P</span></div><h3>Poisson</h3><p>从球队进攻、防守与联赛基准估计双方进球强度，再由比分分布汇总 1X2 概率。球队小样本会向联赛均值收缩。</p><div class="model-foot"><span>GOAL DISTRIBUTION</span><strong>MODEL xG ≠ OBSERVED xG</strong></div></article>
+          <article class="model-card"><div class="model-top"><span>MODEL 01</span><span class="model-sigil">F</span></div><h3>Frequency</h3><p>用平滑后的主胜、平局和客胜频率作为参照，显示三类结果在历史样本中各有多常见。</p><div class="model-foot"><span>HISTORICAL PRIOR</span><strong>H / D / A</strong></div></article>
+          <article class="model-card"><div class="model-top"><span>MODEL 02</span><span class="model-sigil">E</span></div><h3>Elo</h3><p>根据已结束的比赛更新球队强度，并纳入主场优势和平局概率。赛前比较两队的 Elo，可以看到历史表现形成的相对强弱。</p><div class="model-foot"><span>TEAM STRENGTH</span><strong>PRE-MATCH STATE</strong></div></article>
+          <article class="model-card"><div class="model-top"><span>MODEL 03</span><span class="model-sigil">P</span></div><h3>Poisson</h3><p>结合球队进攻、防守数据和联赛基准估计双方进球强度，再根据比分分布计算 1X2 概率。球队数据较少时，估计会向联赛均值收缩。</p><div class="model-foot"><span>GOAL DISTRIBUTION</span><strong>MODEL xG ≠ OBSERVED xG</strong></div></article>
         </div>
         <div class="validation">
-          <div><p class="section-kicker">HOW MODELS ARE COMPARED</p><h3>先守住时间，再比较得失。</h3><p>M3 按时间回放多个验证折，候选模型按 pooled multiclass log loss 排序，Brier 作次级比较。最后的测试段只评估一次，不参与候选选择。</p><a class="source-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/matchquant/selection.py" target="_blank" rel="noopener noreferrer">查看时间序列选模实现 ↗</a></div>
-          <div class="validation-list"><div class="validation-item"><b>TIME-SAFE</b><span>每折从起点之前重建历史；同批比赛全部先预测、后更新。</span></div><div class="validation-item"><b>LOG LOSS + BRIER</b><span>比较概率分布与真实结果的偏差，准确率只是辅助指标。</span></div><div class="validation-item"><b>CALIBRATION IS DIAGNOSTIC</b><span>可靠性图与 ECE 用于诊断，不代表概率已经校准。</span></div></div>
+          <div><p class="section-kicker">HOW MODELS ARE COMPARED</p><h3>比较模型时，先检查时间边界。</h3><p>M3 把历史按时间划分为多个验证折。候选模型先按 pooled multiclass log loss 排序，再用 Brier 分数作次级比较。留出的测试段只用于评估，不参与选模。</p><a class="source-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/matchquant/selection.py" target="_blank" rel="noopener noreferrer">查看时间序列选模实现 ↗</a></div>
+          <div class="validation-list"><div class="validation-item"><b>TIME-SAFE</b><span>每折从起点之前重建历史；同批比赛全部先预测、后更新。</span></div><div class="validation-item"><b>LOG LOSS + BRIER</b><span>比较概率分布与真实结果的偏差，准确率只是辅助指标。</span></div><div class="validation-item"><b>CALIBRATION IS DIAGNOSTIC</b><span>可靠性图和 ECE 目前只作诊断。项目尚未验证概率是否校准，也没有证明模型能解释因果关系或改善未来预测效果。</span></div></div>
         </div>
       </div>
     </section>
@@ -177,19 +177,19 @@
     <section class="content-section" id="factors" aria-labelledby="factor-title">
       <div class="wrap">
         <div class="section-head">
-          <div><p class="section-kicker">M13A · OFFLINE RESULT FACTORS</p><h2 id="factor-title">把球队状态拆开看，<br>再把<em>时间边界守住。</em></h2></div>
-          <p class="section-lede">因子研究目前作为独立离线 sidecar 运行。每项输出都绑定 as-of、实际使用截止和冻结快照，便于研究者观察哪些状态值得进一步验证。</p>
+          <div><p class="section-kicker">M13A · OFFLINE RESULT FACTORS</p><h2 id="factor-title">记录<br><em>赛前状态，标明数据截止。</em></h2></div>
+          <p class="section-lede">M13A 是单独运行的离线因子模块。每项结果都记录 as-of 时间、实际数据截止点和冻结快照，方便确认当时用了哪些数据，也便于后续独立验证。</p>
         </div>
         <div class="factor-panel">
-          <div class="factor-heading"><div><h3>四类信号，仍在实验阶段</h3><p>因子能描述历史状态，不自动证明它有预测价值。窗口完整度、样本覆盖和未知球队会保留为明确状态，不用模糊匹配补齐。</p></div><span class="status-pill">EXPERIMENTAL · REPORT ONLY</span></div>
+          <div class="factor-heading"><div><h3>四类因子，仍在实验阶段</h3><p>这些因子描述球队近期状态，能否改善预测仍需单独验证。窗口不完整、样本覆盖不足或球队未知时，报告会保留相应标记，不会用模糊匹配补数据。</p></div><span class="status-pill">EXPERIMENTAL · REPORT ONLY</span></div>
           <div class="factor-grid">
-            <article class="factor-card"><span class="factor-index">FACTOR / 01</span><h4>近期表现窗口</h4><p>对每队保留最多十场 appearance，分别计算最近 5 场与 10 场积分率、进球、失球和对手批前 Elo 均值。</p><span class="factor-value">WINDOWS 5 / 10 · 3/1/0 POINTS</span></article>
-            <article class="factor-card"><span class="factor-index">FACTOR / 02</span><h4>主客场攻防均值</h4><p>主队读取主场累计，客队读取客场累计；进球与失球均值向对应场地的联赛先验收缩，降低小样本极值。</p><span class="factor-value">SHRINK WEIGHT = 5 LEAGUE MATCHES</span></article>
-            <article class="factor-card"><span class="factor-index">FACTOR / 03</span><h4>日历休息天数</h4><p>以 fixture 日期减去最近一次合格出场日期计算日历日差。它不是精确休息小时数，也不宣称已核实其间所有赛事。</p><span class="factor-value">CALENDAR DAYS · COVERAGE FLAGGED</span></article>
-            <article class="factor-card"><span class="factor-index">FACTOR / 04</span><h4>对手批前 Elo</h4><p>使用该比赛时间批次开始前的对手 Elo。批次内全部预测先完成，再用赛果更新状态。</p><span class="factor-value">PRE-BATCH STATE · NO SAME-BATCH LEAKAGE</span></article>
+            <article class="factor-card"><span class="factor-index">FACTOR / 01</span><h4>近期表现窗口</h4><p>每队最多保留 10 场出场记录，计算最近 5 场和 10 场的积分率、进球数、失球数，以及对手在比赛批次开始前的 Elo 均值。</p><span class="factor-value">WINDOWS 5 / 10 · 3/1/0 POINTS</span></article>
+            <article class="factor-card"><span class="factor-index">FACTOR / 02</span><h4>主客场攻防均值</h4><p>主队按主场比赛统计，客队按客场比赛统计。进球和失球均值会向对应场地的联赛基准收缩，减少小样本造成的极端值。</p><span class="factor-value">SHRINK WEIGHT = 5 LEAGUE MATCHES</span></article>
+            <article class="factor-card"><span class="factor-index">FACTOR / 03</span><h4>日历休息天数</h4><p>用赛程日期减去最近一次符合条件的出场日期，计算相隔的日历天数。这个数值精确到日，不代表实际休息小时数；数据也未核实这段时间内的所有赛事。</p><span class="factor-value">CALENDAR DAYS · COVERAGE FLAGGED</span></article>
+            <article class="factor-card"><span class="factor-index">FACTOR / 04</span><h4>对手批前 Elo</h4><p>统计某个时间批次时，因子使用批次开始前的对手 Elo。该批次所有比赛先预测，再根据赛果更新球队状态。</p><span class="factor-value">PRE-BATCH STATE · NO SAME-BATCH LEAKAGE</span></article>
           </div>
           <div class="factor-contract" aria-label="因子研究证据链"><span>as_of</span><i>→</i><span>used_data_cutoff</span><i>→</i><span>snapshot manifest + SHA-256</span><i>→</i><span>query / report</span><i>·</i><span>window completeness &amp; unknown-team flags</span></div>
-          <div class="factor-warning"><strong>当前边界</strong><span>M13A 不改变 M1–M12 预测或结算 schema，未调整任何 1X2 概率，也没有证明提升命中率、校准度或未来预测表现。coverage 仍标记为冻结快照覆盖未验证。</span><a class="source-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/matchquant/result_factors.py" target="_blank" rel="noopener noreferrer">查看因子实现 ↗</a></div>
+          <div class="factor-warning"><strong>当前边界</strong><span>这些因子单独输出报告，现有 M1 至 M12 的预测、结算格式和 1X2 概率保持不变。它们能否提高命中率或校准度还没有证据，未来预测效果也未验证。冻结快照的覆盖情况仍待核实。</span><a class="source-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/matchquant/result_factors.py" target="_blank" rel="noopener noreferrer">查看因子实现 ↗</a></div>
         </div>
       </div>
     </section>
@@ -197,15 +197,15 @@
     <section class="content-section alt" id="path" aria-labelledby="path-title">
       <div class="wrap">
         <div class="section-head">
-          <div><p class="section-kicker">PRODUCT PATH · M1 → M13A</p><h2 id="path-title">从简单基线，<br>走向<em>可审计的研究闭环。</em></h2></div>
-          <p class="section-lede">产品路径围绕本地数据、时间安全和可复核产物逐步扩展。因子融合是未来需要单独验证的研究方向，不是当前已交付能力。</p>
+          <div><p class="section-kicker">PRODUCT PATH · M1 TO M13A</p><h2 id="path-title">从基线模型开始，<br>逐步建立<em>可复核的研究流程。</em></h2></div>
+          <p class="section-lede">MatchQuant 从概率基线开始，逐步加入时间序列验证、赛前快照和赛后复盘。M13A 因子仍在独立研究阶段，是否并入主模型要看后续评估。</p>
         </div>
         <div class="timeline" role="list" aria-label="MatchQuant 产品阶段">
-          <article class="milestone" role="listitem"><span>M1–M2</span><h3>数据与概率基线</h3><p>统一赛果格式、数据版本和 Frequency/Elo/Poisson 基础模型。</p></article>
-          <article class="milestone" role="listitem"><span>M3–M5</span><h3>验证与赛前快照</h3><p>按时间选模、保留验证证据，构建本地赛程与预测流程。</p></article>
-          <article class="milestone" role="listitem"><span>M6–M10</span><h3>赛后复盘工作流</h3><p>加入结算、报告、结果桥接和本地预测/赛后会话。</p></article>
-          <article class="milestone" role="listitem"><span>M11–M12</span><h3>状态与版本审计</h3><p>关联快照、数据新鲜度和历史来源，明确 fresh/stale 等状态。</p></article>
-          <article class="milestone" role="listitem"><span>M13A · NOW</span><h3>离线因子实验</h3><p>建立独立结果因子 sidecar，等待独立评估，不影响现有概率。</p></article>
+          <article class="milestone" role="listitem"><span>M1 至 M2</span><h3>数据与概率基线</h3><p>规范赛果格式与数据版本，建立 Frequency、Elo 和 Poisson 基线。</p></article>
+          <article class="milestone" role="listitem"><span>M3 至 M5</span><h3>验证与赛前快照</h3><p>按时间顺序比较模型，保存验证记录，完善本地预测流程。</p></article>
+          <article class="milestone" role="listitem"><span>M6 至 M10</span><h3>赛后复盘工作流</h3><p>加入赛后结算和报告，打通预测结果与实际赛果的复核流程。</p></article>
+          <article class="milestone" role="listitem"><span>M11 至 M12</span><h3>状态与版本审计</h3><p>记录快照、数据更新时间和历史来源，标明 fresh 或 stale 状态。</p></article>
+          <article class="milestone" role="listitem"><span>M13A · NOW</span><h3>离线因子实验</h3><p>建立独立的赛果因子模块，等待评估结果；目前不影响现有概率。</p></article>
         </div>
       </div>
     </section>
@@ -213,37 +213,37 @@
     <section class="content-section" id="start" aria-labelledby="start-title">
       <div class="wrap">
         <div class="start-layout">
-          <div><p class="section-kicker">OPEN SOURCE · RUN LOCALLY</p><h2 class="start-title" id="start-title">把整个仓库<br>带回<em>自己的环境。</em></h2><p class="start-copy">MatchQuant 的主产品是 Python 包与 CLI。你可以完整 clone 或 fork GitHub 仓库，按 README 配置环境并使用演示数据熟悉流程。接入真实数据前，请自行确认来源和使用授权。</p><div class="start-links"><a class="text-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noopener noreferrer">README · 安装与工作流 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/AGENTS.md" target="_blank" rel="noopener noreferrer">AGENTS.md · Agent 规则 <span aria-hidden="true">↗</span></a></div></div>
+          <div><p class="section-kicker">OPEN SOURCE · RUN LOCALLY</p><h2 class="start-title" id="start-title">从 GitHub<br>开始<em>本地运行 MatchQuant。</em></h2><p class="start-copy">MatchQuant 提供 Python 包和 CLI。按 README 在本地配置环境后，可以先用演示数据熟悉流程，再接入你有权使用的历史数据。</p><div class="start-links"><a class="text-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noopener noreferrer">README · 安装与工作流 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/kenNethhao8/MatchQuant/blob/main/AGENTS.md" target="_blank" rel="noopener noreferrer">AGENTS.md · Agent 规则 <span aria-hidden="true">↗</span></a></div></div>
           <div class="clone-card"><div class="clone-top"><b>FULL REPOSITORY · POWERSHELL EXAMPLE</b><span>GET STARTED</span></div><pre><code><span class="code-orange">git clone</span> https://github.com/kenNethhao8/MatchQuant.git
 <span class="code-orange">cd</span> MatchQuant
 
 <span class="code-orange">python -m venv</span> .venv
 <span class="code-orange">.\.venv\Scripts\Activate.ps1</span>
 <span class="code-orange">python -m pip install</span> -e . -c constraints-baseline-v0.1.txt
-<span class="code-orange">python -m matchquant</span> --help</code></pre><div class="clone-foot">源码开发安装按 README 使用依赖约束文件。可执行 CLI 无需 Agent；若使用 Codex 等 Agent，请先让它阅读仓库中的 AGENTS.md。</div></div>
+<span class="code-orange">python -m matchquant</span> --help</code></pre><div class="clone-foot">按 README 使用依赖约束文件安装开发环境。CLI 可以独立运行。使用 Codex 等 Agent 时，让它先读取仓库中的 AGENTS.md。</div></div>
         </div>
         <div class="onboard" aria-label="从 GitHub 开始的步骤">
-          <article class="onboard-step"><span class="num">STEP 01</span><h3>完整 Clone / Fork</h3><p>使用完整 Git 历史和仓库文件；不要只下载宣传页面。</p></article>
-          <article class="onboard-step"><span class="num">STEP 02</span><h3>先读项目说明</h3><p>按 README 配置 Python 环境、数据目录和所需命令。</p></article>
-          <article class="onboard-step"><span class="num">STEP 03</span><h3>从演示开始</h3><p>先用仓库示例熟悉输出；真实数据在本地按授权准备。</p></article>
-          <article class="onboard-step"><span class="num">STEP 04</span><h3>Agent 按需加入</h3><p>Agent 可协助组织步骤和复核结果；预测计算始终由 MatchQuant 执行。</p></article>
+          <article class="onboard-step"><span class="num">STEP 01</span><h3>完整 Clone / Fork</h3><p>Clone 或 Fork 完整仓库，获取代码文件和 Git 历史。</p></article>
+          <article class="onboard-step"><span class="num">STEP 02</span><h3>先读项目说明</h3><p>跟随 README 配置 Python 环境和数据目录，再运行需要的命令。</p></article>
+          <article class="onboard-step"><span class="num">STEP 03</span><h3>从演示开始</h3><p>先运行仓库示例，熟悉输出格式。准备真实数据时，请在本地确认来源和使用授权。</p></article>
+          <article class="onboard-step"><span class="num">STEP 04</span><h3>Agent 按需加入</h3><p>Agent 可以帮你安排步骤、检查结果；预测计算由 MatchQuant 执行。</p></article>
         </div>
       </div>
     </section>
 
     <section class="content-section alt" id="limits" aria-labelledby="limits-title">
       <div class="wrap">
-        <div class="section-head"><div><p class="section-kicker">RESEARCH BOUNDARIES</p><h2 id="limits-title">好的研究，也要知道<em>哪里不能下结论。</em></h2></div><p class="section-lede">模型输出是基于特定历史数据和设置的概率估计。工程可复现不等于赛果可预测；回测指标不自动转化为未来优势。</p></div>
+        <div class="section-head"><div><p class="section-kicker">RESEARCH BOUNDARIES</p><h2 id="limits-title">研究结论有<em>明确的边界。</em></h2></div><p class="section-lede">模型根据指定的历史数据和设置输出概率。回测指标只描述对应样本上的结果，不能保证未来表现。</p></div>
         <div class="boundary-grid">
-          <article class="boundary-card"><h3>没有实时信息接入</h3><p>当前不接入阵容、伤停、新闻或赔率，不提供在线赛程和实时预测。</p></article>
-          <article class="boundary-card"><h3>概率不是保证</h3><p>未宣称概率已经校准、模型具有因果解释或能改善未来预测表现。</p></article>
-          <article class="boundary-card"><h3>本地研究，不是投注服务</h3><p>历史回测和因子报告不构成投资/投注建议，不证明盈利或下注价值。</p></article>
+          <article class="boundary-card"><h3>没有实时信息接入</h3><p>MatchQuant 目前使用本地输入，不读取阵容、伤停、新闻或赔率，也不提供在线赛程或实时预测。</p></article>
+          <article class="boundary-card"><h3>校准和预测效果待验证</h3><p>可靠性图和 ECE 目前只作诊断。项目没有给出概率校准或因果解释结论，也未证明未来预测效果有所提升。</p></article>
+          <article class="boundary-card"><h3>仅供本地研究</h3><p>历史回测和因子报告只用于研究，不构成投注建议，也不代表盈利或下注价值。</p></article>
         </div>
       </div>
     </section>
 
     <section class="content-section" aria-label="访问 MatchQuant 开源项目">
-      <div class="wrap"><div class="closing"><div><h2>下一步，从源码和证据开始。</h2><p>阅读安装说明、研究路径与数据边界，再把项目配置到自己的本地环境。</p></div><a class="button-primary" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">前往 GitHub 仓库 <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div></div>
+      <div class="wrap"><div class="closing"><div><h2>获取 MatchQuant 源码</h2><p>先看 README 中的安装说明和数据要求，再按自己的环境配置仓库。</p></div><a class="button-primary" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">前往 GitHub 仓库 <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div></div>
     </section>
   </main>
   <script>
