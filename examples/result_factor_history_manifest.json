@@ -1,0 +1,19 @@
+{
+  "schema_version": "m2.1-processed-manifest-v1",
+  "dataset_version": "m13a-synthetic-result-factors-v1",
+  "data_cutoff": "2024-08-15",
+  "output": {
+    "filename": "result_factor_history.csv",
+    "sha256": "8ae132383d175ec7cf9c2061ad945062133df72205fa80b4c36b9a67d5c88861",
+    "rows": 5,
+    "columns": [
+      "match_id",
+      "date",
+      "season",
+      "home_team",
+      "away_team",
+      "home_goals",
+      "away_goals"
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-# MatchQuant M1–M12 — Research Engine
+# MatchQuant M1–M13A — Research Engine
 
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
@@ -522,6 +522,42 @@ python -m matchquant engine-snapshot-status `
 
 每次调用都会在显式 output root 下创建唯一的 `m12_engine_snapshot_status_<UTC>_<ID>`，保存 `snapshot_status.json` 和简洁的 `snapshot_status.md`。`fresh` 只在两类证据完整且路径、hash、dataset version 精确匹配时返回；有效但关联到不同历史版本的快照返回 `stale`；缺失、篡改或结构不完整的 snapshot/pointer 返回 `unverifiable` 并保留失败证据。`stale` 不会使旧快照失效：旧快照仍可由 `engine-snapshot-predict` 独立复现。若要重建，用户必须主动再次执行显式的 M11 `engine-snapshot-build`。
 
+## M13A：离线赛果因子与轻量球队状态（实验）
+
+M13A 在独立 sidecar 中构建 5/10 场赛果窗口、场地进失球收缩均值、日历休息日和批前对手 Elo。它不修改 M11 状态、M12 审计、B04 运行包、既有预测/结算 schema 或任何 1X2 概率；报告固定标记 `experimental=true`、`probability_adjustment_applied=false` 和 `coverage_status=frozen_snapshot_coverage_not_verified`。这组结果用于解释和后续研究，不代表已训练、已校准、因果有效或改善未来预测。
+
+研究端显式读取 canonical 历史与其 M2/M2.1 processed manifest，按 `_timeline`、`_history_before_as_of` 和严格 manifest 绑定处理。date-only `as_of` 排除当日整批；精确时间边界与 date-only 比赛混用时沿用原拒绝规则。每个比赛批次先冻结全部球队及对手的批前 Elo，再依稳定 `match_id` 顺序更新现有 `EloModel`；跨赛季固定 carry。`used_data_cutoff` 是实际纳入的最后一场，manifest 另记录完整源数据的 `data_cutoff`。
+
+```powershell
+python -m matchquant result-factor-build `
+  --history examples\result_factor_history.csv `
+  --history-manifest examples\result_factor_history_manifest.json `
+  --as-of 2024-08-16 `
+  --output-root D:\matchquant_work\result_factor_snapshots
+
+python -m matchquant result-factor-query `
+  --factor-manifest <build 输出的 factor_manifest.json> `
+  --fixtures examples\result_factor_fixtures.csv `
+  --output-root D:\matchquant_work\result_factor_queries
+```
+
+两条 CLI 都要求明确的输出根，并在其中创建唯一目录。构建输出为 `factor_manifest.json`、`team_factor_state.json` 和 `factor_build_report.md`；manifest 在最后写入。查询输出为 `factor_query.json`、`factor_features.csv` 和 `factor_query_report.md`。输入输出路径不能重叠，输出根不能落在正式数据/运行根、原归档、仓库、冻结设计、旧评估或旧报告中。示例历史与 manifest 是小型合成数据，不包含真实比赛结果。
+
+公开 API 为 `build_result_factor_snapshot(history_path, history_manifest_path, as_of, *, output_root)`、`load_result_factor_snapshot(snapshot_manifest_path)` 和 `query_result_factors(snapshot_manifest_path, fixtures_path, *, output_root)`。查询只读显式 factor manifest、固定同目录 JSON state 和 score-free fixture CSV；manifest 中的历史路径只保留来源记录，不会被打开。查询不读取历史、历史 manifest、比分、`current` pointer 或网络，也不自动选 latest 或更新状态。fixtures 继续使用 M4 五列 schema，并由现有 `load_fixtures` 拒绝非空比分。
+
+因子定义固定如下：
+
+- 每队保留至多最近 10 场 appearance。5/10 窗口均输出 `n`、requested window、`small_sample=(n<3)`、`window_complete`、`points_rate`、进球/失球均值和当时记录的对手批前 Elo 均值；`n=0` 的数值为 null。
+- 胜/平/负积分为 3/1/0，`points_rate=sum(points)/(3*n)`。未知队不猜别名，输出 `unknown_team=true`、空窗口和 Elo 1500 先验标记。
+- 主队使用本队 home 累计，客队使用 away 累计。每项场地进球/失球均值按 `(球队累计值 + 5 × 对应场地联盟均值)/(球队场次数 + 5)` 收缩；没有联盟样本时保持 null。
+- `rest_calendar_days` 是 fixture 日期减去该队最后一场合格 appearance 日期的日历日差，不是精确休息小时。固定标记 `unverified_intervening_matches=true`，因为快照之后可能已经有其它比赛。
+
+v1 精确键集合固定在实现常量中。manifest 顶层键为 `schema_version,snapshot_id,generated_at,as_of,history,config,config_sha256,state,report,inventory,status,reasons,coverage_status,experimental,probability_adjustment_applied`；history 子对象绑定两份源文件 hash、完整/使用行数、完整 cutoff 和实际使用 cutoff。state 顶层键为 `schema_version,as_of,used_data_cutoff,rows_used,config,config_sha256,league_priors,teams`。team 记录只有累计场次/进失球和 venue 累计、最终 Elo、最多十个 appearance；不存全量历史表。query 顶层键为 `schema_version,generated_at,status,as_of,snapshot,fixtures,fixture_count,results,reasons,coverage_status,experimental,probability_adjustment_applied,validation,failure_stage`。loader 对键集合、真实类型、有限值、hash/config/as-of/cutoff、窗口长度与顺序、批次时序、相对文件名、reparse 越界和实际字节清单执行严格校验；完整快照上限为 5 MiB。
+
+嵌套对象也采用 exact keys：manifest `history` 为 `path,sha256,manifest_path,manifest_sha256,manifest_schema_version,dataset_version,data_cutoff,rows_total,rows_used,used_data_cutoff,output_sha256`；manifest `state` 为 `filename,schema_version,sha256,bytes`，`report` 为 `filename,sha256,bytes`，`inventory` 为 `manifest_bytes,total_bytes`。state `config` 为 `elo,season_mode,windows,minimum_sample_for_ready,venue_prior_weight`，其中 `elo` 固定六参数 `initial_rating,k_factor,home_advantage,rating_scale,draw_base,draw_scale`；`league_priors` 为 `home,away`，每侧为 `matches,goals_for_sum,goals_against_sum,goals_for_mean,goals_against_mean`。每队精确字段为 `total_appearances,goals_for_sum,goals_against_sum,venue_totals,final_elo,appearances`；venue totals 每侧为 `matches,goals_for_sum,goals_against_sum`；appearance 为 `match_id,batch_time,date,date_only,season,venue,goals_for,goals_against,points,opponent_pre_batch_elo`。query result 保留五个 fixture identity 字段，再附 `status,reasons,home,away,probability_adjustment_applied`；每个 home/away 对象为 `unknown_team,elo_rating,elo_prior,total_appearances,recent_5,recent_10,venue,rest_calendar_days,last_match_date,unverified_intervening_matches`。窗口对象为 `n,requested_window,small_sample,window_complete,points_rate,goals_for_mean,goals_against_mean,opponent_pre_elo_mean`；venue 对象为 `goals_for_shrunk,goals_against_shrunk,sample_n,prior_matches,prior_used`。
+
+构建 `ready` 退出 0 表示计算和持久化有效且至少纳入 3 场；查询 `ready` 退出 0 还要求本次所有 fixture 的主客队各有至少 3 场基础样本。`needs_review` 退出 2 表示未知队或小样本/无训练样本；预期输入、schema、hash、时序或 IO 错误返回结构化 `blocked` 并退出 1。argparse 缺参/usage 错误仍退出 2。READY/工程校验不证明 fixture 时点的历史覆盖完整。
+
 ## 快照会话与只读审计（B03）
 
 B03 在 M11 之上新增两个公开 API（`matchquant.run_snapshot_session`、`matchquant.verify_snapshot_run`）和两条只读 CLI，把"单模型 M11 快照 → 预测 → 只读审计"串成一个离线会话。两者都只接受单模型 M11 输入，复用既有严格 snapshot loader、M11 predict 与 B02 预测证据适配层；不读取 history CSV、历史 processed manifest 或 current pointer，不联网、不结算、不运行 M12、不 apply、不重建快照。
@@ -632,7 +668,7 @@ python -m matchquant run --config examples/config.json
 python -m unittest discover -s tests -v
 ```
 
-M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11/M12 仍不包含网页、数据库、实时预测服务、因子引擎、外部赔率、球员/新闻数据或机器学习模型；历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、快照新鲜度审计、本地预测会话、本地赛后会话与本地结算不等于未来表现、盈利、投注价值或投注建议。
+M1–M12 已接受功能保持既有概率和 schema。M13A 只添加离线赛果因子 sidecar，仍不接入预测概率；网页、数据库、实时预测服务、外部赔率、球员/新闻数据和机器学习模型不在此阶段。历史回测、校准诊断、本地 Alpha 快照、引擎状态快照、快照新鲜度审计、本地预测会话、本地赛后会话、本地结算和 M13A 赛果因子都不等于未来表现、盈利、投注价值或投注建议。
 
 ## 当前交付状态（B07 最终交付归档）
 
@@ -646,6 +682,7 @@ M2/M2.1/M3/M4/M5/M6/M8/M9/M10/M11/M12 仍不包含网页、数据库、实时预
 - **旧历史**：**3800 行**，cutoff `2025-05-25`。旧 M2 processed manifest **没有 `dataset_version` 字段**，保持原样，未手填、未伪造。
 - **本轮数据变更：无。** B07 **没有**执行 `epl-sync`、**没有** `--apply`、**没有**联网、**没有**写入上述两个正式根；active/current pointer 与最新数据状态**均未改变**。
 - **M11/M12 已实现**（不是计划）：入口见上文"M11 引擎快照"与"M12 快照新鲜度审计"各节。
+- **M13A 正在独立研究阶段**：源代码增加离线赛果因子 snapshot/build/query；不属于 baseline-v0.1 B07 wheel/ZIP，也未改变任何概率；最终状态等待独立评估。
 - **交付材料**：wheelhouse、源码归档、合成 demo、`release_manifest.json`、`CHECKSUMS.sha256` 与使用手册构成一个**本机**交付包，位于 `D:\matchquant\handoff\deepseek_reports\` 下 B07 轮次目录的 `package\`。最新计划入口为 `D:\matchquant\BASELINE-START-HERE.md`。
-- **未自动开启**：M13 因子 / M14 近期信息 / M15 融合校准 / M16 页面 / M17 扩展验收，全部未实现、未启动。
+- **未自动开启**：M13B/C、M14 近期信息、M15 融合校准、M16 页面和 M17 扩展验收须各自通过门槛并另行授权。
 - **明确限制**：历史曝光回归不是盲测；不证明未来表现、概率校准或当前数据覆盖；`research` 模式恒为 `needs_review`（退出码 2）；包无签名，SHA-256 只证明文件一致性。`fresh_at_issue` 只表示发行时关联，运行时 `active_link_status=not_checked_in_runtime`。

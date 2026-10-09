@@ -20,6 +20,7 @@ from .epl_local_stage import stage_local_epl_source
 from .epl_sync import sync_epl
 from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
 from .engine_snapshot_status import check_engine_snapshot_status
+from .result_factor_snapshot import build_result_factor_snapshot, query_result_factors
 from .forecast import load_model_config, run_forecast
 from .forecast_session import run_forecast_session
 from .postmatch_session import run_postmatch_session
@@ -175,6 +176,21 @@ def _parser() -> argparse.ArgumentParser:
         "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
         help="root for a new timestamped M12 status audit directory",
     )
+    result_factor_build = subparsers.add_parser(
+        "result-factor-build",
+        help="build an offline M13A result-factor snapshot from explicit canonical history evidence",
+    )
+    result_factor_build.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
+    result_factor_build.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
+    result_factor_build.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
+    result_factor_build.add_argument("--output-root", type=Path, required=True, help="safe root for a new result-factor snapshot directory")
+    result_factor_query = subparsers.add_parser(
+        "result-factor-query",
+        help="query an explicit M13A factor snapshot with score-free fixtures only",
+    )
+    result_factor_query.add_argument("--factor-manifest", type=Path, required=True, help="explicit factor_manifest.json")
+    result_factor_query.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
+    result_factor_query.add_argument("--output-root", type=Path, required=True, help="safe root for a new factor-query directory")
     snapshot_session = subparsers.add_parser(
         "snapshot-session",
         help="run one offline single-model M11 snapshot prediction session with a read-only audit",
@@ -673,6 +689,45 @@ def _engine_snapshot_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _result_factor_build(args: argparse.Namespace) -> int:
+    result = build_result_factor_snapshot(
+        args.history,
+        args.history_manifest,
+        args.as_of,
+        output_root=args.output_root,
+    )
+    print(f"status={result['status']}")
+    print(f"rows_total={result.get('rows_total')}")
+    print(f"rows_used={result.get('rows_used')}")
+    print(f"used_data_cutoff={result.get('used_data_cutoff')}")
+    print(f"snapshot_dir={result['output_dir']}")
+    if result.get("manifest_path"):
+        print(f"factor_manifest={result['manifest_path']}")
+    if result.get("state_path"):
+        print(f"team_factor_state={result['state_path']}")
+    print(f"factor_build_report={result['report_path']}")
+    for reason in result.get("reasons", []):
+        print(f"reason={reason}")
+    return 1 if result["status"] == "blocked" else 2 if result["status"] == "needs_review" else 0
+
+
+def _result_factor_query(args: argparse.Namespace) -> int:
+    result = query_result_factors(
+        args.factor_manifest,
+        args.fixtures,
+        output_root=args.output_root,
+    )
+    print(f"status={result['status']}")
+    print(f"fixtures={result.get('fixture_count', 0)}")
+    print(f"factor_query={result['query_path']}")
+    if result.get("csv_path"):
+        print(f"factor_features={result['csv_path']}")
+    print(f"factor_query_report={result['report_path']}")
+    for reason in result.get("reasons", []):
+        print(f"reason={reason}")
+    return 1 if result["status"] == "blocked" else 2 if result["status"] == "needs_review" else 0
+
+
 def _engine_snapshot_status(args: argparse.Namespace) -> int:
     result = check_engine_snapshot_status(
         args.snapshot_manifest,
@@ -1075,6 +1130,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_engine_snapshot_build(args))
         if args.command == "engine-snapshot-predict":
             raise SystemExit(_engine_snapshot_predict(args))
+        if args.command == "result-factor-build":
+            raise SystemExit(_result_factor_build(args))
+        if args.command == "result-factor-query":
+            raise SystemExit(_result_factor_query(args))
         if args.command == "engine-snapshot-status":
             raise SystemExit(_engine_snapshot_status(args))
         if args.command == "snapshot-session":
@@ -1107,4 +1166,7 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(_postmatch_session(args))
         raise ValueError(f"unknown command: {args.command}")
     except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
+        if args.command in {"result-factor-build", "result-factor-query"}:
+            print(f"matchquant {args.command}: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
         parser.error(str(exc))
