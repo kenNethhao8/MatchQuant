@@ -1,5 +1,14 @@
 # MatchQuant M1–M13A — Research Engine
 
+> GitHub 开源仓库：[kenNethhao8/MatchQuant](https://github.com/kenNethhao8/MatchQuant)
+> License: MIT. See [LICENSE](LICENSE).
+
+## Agent 协作（可选）
+
+MatchQuant 的核心是本地 Python 包和 CLI，可独立运行，不要求 Agent、LLM API 或在线预测服务。Codex 等 Agent 可以读取仓库根目录的 AGENTS.md，协助整理研究步骤、调用明确的 CLI 命令、检查结构化产物并解释状态；计算逻辑仍由 MatchQuant 执行，Agent 是可选协作层。
+
+使用 Agent 时仍需明确指定数据、时间边界和输出位置，并按仓库规则复核 ready、needs_review、blocked 等结果。Agent 协作不会使数据自动变为最新、覆盖完整或预测已校准。
+
 MatchQuant 是一个低成本、可复现的足球 1X2（主胜/平/客胜）预测与回测最小框架。M1 的核心运行和 M2 的数据适配只依赖 Python、pandas 和 numpy，不依赖 LLM、API Key、付费服务、数据库或网页。
 
 ## 安装（baseline-v0.1，B05 验证：wheel + wheelhouse 离线安装）

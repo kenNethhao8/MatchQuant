@@ -3,454 +3,253 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1518">
-  <meta name="description" content="MatchQuant M13A 赛果因子只读演示面板。">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='14' fill='%23172124'/%3E%3Cpath d='M10 32V16h5l9 10 9-10h5v16h-5V23l-9 9-9-9v9z' fill='%23a5efb5'/%3E%3C/svg%3E">
-  <title>MatchQuant · 赛果因子面板</title>
+  <meta name="description" content="MatchQuant 是一个本地优先、可审计的足球赛果研究引擎。Python CLI 可独立运行，Agent 协作可选。">
+  <meta name="theme-color" content="#f5f3ed">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Crect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%23164d3c%22/%3E%3Ctext x=%2232%22 y=%2241%22 text-anchor=%22middle%22 font-family=%22Arial,sans-serif%22 font-size=%2221%22 font-weight=%22700%22 fill=%22%23c9ec7a%22%3EMQ%3C/text%3E%3C/svg%3E">
+  <title>MatchQuant · 可复现的足球研究</title>
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #0b1518;
-      --panel: #111f22;
-      --panel-raised: #162629;
-      --line: #293b3d;
-      --line-soft: rgba(190, 219, 207, .1);
-      --text: #edf2e9;
-      --muted: #9eafb0;
-      --mint: #a5efb5;
-      --amber: #e6bf77;
-      --red: #f29a83;
-      --radius: 16px;
+      color-scheme: light;
+      --paper: #f5f3ed;
+      --white: #fffefa;
+      --ink: #172320;
+      --muted: #69736d;
+      --line: #dce1d8;
+      --green: #164d3c;
+      --green-dark: #103d30;
+      --lime: #c9ec7a;
+      --orange: #dc744b;
+      --soft: #e9eee5;
+      --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
       font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-width: 320px;
-      color: var(--text);
-      background:
-        radial-gradient(ellipse at 5% -12%, rgba(77, 145, 112, .16), transparent 38rem),
-        radial-gradient(ellipse at 100% 0%, rgba(194, 151, 78, .08), transparent 34rem),
-        var(--bg);
-      line-height: 1.5;
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--paper); color: var(--ink); }
+    a { color: inherit; }
+    .skip { position: absolute; left: 16px; top: -60px; z-index: 5; padding: 10px 14px; background: var(--white); border-radius: 8px; }
+    .skip:focus { top: 12px; }
+    .shell { width: min(1120px, calc(100% - 48px)); margin: 0 auto; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 78px; border-bottom: 1px solid var(--line); }
+    .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; font-weight: 800; letter-spacing: -.03em; }
+    .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px 11px 11px 3px; background: var(--green); color: var(--lime); font: 800 12px var(--mono); letter-spacing: -.08em; }
+    .brand small { display: block; margin-top: 2px; color: var(--muted); font: 600 9px var(--mono); letter-spacing: .16em; }
+    nav { display: flex; align-items: center; gap: 25px; color: var(--muted); font-size: 12px; }
+    nav a { text-decoration: none; }
+    nav a:hover { color: var(--green); }
+    .nav-cta, .button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 0 17px; border: 1px solid var(--green); border-radius: 8px; background: var(--green); color: white; font-size: 12px; font-weight: 700; text-decoration: none; transition: transform .15s ease, background .15s ease; }
+    .nav-cta:hover, .button:hover { transform: translateY(-1px); background: var(--green-dark); }
+    .button.secondary { background: transparent; color: var(--green); }
+    .button.secondary:hover { background: var(--soft); }
+    .hero { display: grid; grid-template-columns: 1.08fr .92fr; align-items: center; gap: 70px; padding: 82px 0 72px; }
+    .eyebrow { display: flex; align-items: center; gap: 9px; margin: 0 0 20px; color: var(--green); font: 700 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--orange); }
+    h1 { max-width: 650px; margin: 0; font-size: clamp(42px, 6vw, 68px); line-height: 1.08; letter-spacing: -.065em; font-weight: 750; }
+    .hero-copy { max-width: 570px; margin: 23px 0 27px; color: #4e5c55; font-size: 16px; line-height: 1.9; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 11px; }
+    .hero-note { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 28px; color: var(--muted); font-size: 11px; }
+    .hero-note span::before { content: "●"; margin-right: 7px; color: var(--orange); font-size: 8px; vertical-align: 1px; }
+    .flow-card { position: relative; overflow: hidden; padding: 26px; border: 1px solid #28493e; border-radius: 18px; background: var(--green); color: white; box-shadow: 0 20px 50px rgba(24, 55, 41, .13); }
+    .flow-card::after { position: absolute; right: -48px; bottom: -90px; width: 250px; height: 250px; border: 1px solid rgba(201, 236, 122, .22); border-radius: 50%; box-shadow: 0 0 0 24px rgba(201,236,122,.04), 0 0 0 48px rgba(201,236,122,.04); content: ""; }
+    .card-kicker { position: relative; z-index: 1; color: var(--lime); font: 700 10px var(--mono); letter-spacing: .15em; }
+    .flow-title { position: relative; z-index: 1; margin: 11px 0 21px; font-size: 22px; letter-spacing: -.04em; }
+    .flow-step { position: relative; z-index: 1; display: grid; grid-template-columns: 34px 1fr; align-items: start; gap: 12px; padding: 15px 0; border-top: 1px solid rgba(255,255,255,.17); }
+    .step-no { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid rgba(201,236,122,.5); border-radius: 50%; color: var(--lime); font: 700 10px var(--mono); }
+    .flow-step strong { display: block; margin: 1px 0 5px; font-size: 13px; }
+    .flow-step p { margin: 0; color: #c7d5cc; font-size: 11px; line-height: 1.7; }
+    .flow-foot { position: relative; z-index: 1; display: flex; justify-content: space-between; margin-top: 10px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.17); color: #d5dfd9; font: 10px var(--mono); }
+    .section { padding: 67px 0; border-top: 1px solid var(--line); }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 29px; }
+    .section-label { margin: 0 0 11px; color: var(--orange); font: 700 10px var(--mono); letter-spacing: .15em; }
+    h2 { margin: 0; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.055em; line-height: 1.15; }
+    .section-intro { max-width: 440px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .feature { min-height: 190px; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,254,250,.66); }
+    .feature-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 20px; border-radius: 9px; background: var(--soft); color: var(--green); font: 700 13px var(--mono); }
+    .feature h3 { margin: 0 0 9px; font-size: 15px; letter-spacing: -.025em; }
+    .feature p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
+    .agent-panel { display: grid; grid-template-columns: .8fr 1.2fr; gap: 44px; align-items: start; padding: 28px; border-radius: 15px; background: var(--soft); }
+    .agent-panel h3 { margin: 0 0 12px; font-size: 22px; letter-spacing: -.045em; }
+    .agent-panel p { margin: 0; color: #58665f; font-size: 12px; line-height: 1.85; }
+    .agent-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+    .agent-list li { display: grid; grid-template-columns: 25px 1fr; gap: 10px; color: #46544d; font-size: 12px; line-height: 1.75; }
+    .check { color: var(--green); font-weight: 800; }
+    .quickstart { display: grid; grid-template-columns: .75fr 1.25fr; gap: 35px; align-items: center; }
+    .quickstart p { max-width: 380px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+    pre { overflow-x: auto; margin: 0; padding: 22px; border: 1px solid #233d34; border-radius: 12px; background: #172c25; color: #e5eee6; font: 12px/1.9 var(--mono); }
+    .code-comment { color: #9eb6a8; }
+    .boundary { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+    .boundary article { padding: 20px 22px; border: 1px solid var(--line); border-radius: 11px; background: var(--white); }
+    .boundary strong { display: block; margin-bottom: 7px; font-size: 12px; }
+    .boundary p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+    .final-cta { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 33px; border-radius: 15px; background: #e9e4d6; }
+    .final-cta h2 { font-size: 28px; }
+    .final-cta p { margin: 9px 0 0; color: var(--muted); font-size: 12px; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px 0 34px; color: var(--muted); font-size: 10px; }
+    footer a { text-decoration: none; }
+    @media (max-width: 800px) {
+      .hero { grid-template-columns: 1fr; gap: 38px; padding: 58px 0; }
+      .flow-card { max-width: 620px; }
+      .section-head { display: block; }
+      .section-intro { margin-top: 13px; }
+      .agent-panel, .quickstart { grid-template-columns: 1fr; gap: 24px; }
     }
-    button { font: inherit; }
-    .shell { width: min(1380px, calc(100% - 48px)); margin: 0 auto; }
-    .topbar { min-height: 70px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
-    .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; letter-spacing: .02em; }
-    .brand-mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: var(--mint); background: #1c302d; font-size: 12px; letter-spacing: .04em; }
-    .brand small { display: block; color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: .17em; margin-top: 1px; }
-    .top-meta { display: flex; align-items: center; gap: 8px; }
-    .pill, .status { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; color: var(--muted); font-size: 11px; white-space: nowrap; }
-    .pill::before, .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .pill.demo { color: var(--mint); border-color: rgba(165, 239, 181, .28); background: rgba(165, 239, 181, .07); }
-    .pill.exp { color: var(--amber); border-color: rgba(230, 191, 119, .26); background: rgba(230, 191, 119, .06); }
-    .intro { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 34px 0 21px; }
-    .eyebrow { color: var(--mint); font-size: 10px; font-weight: 700; letter-spacing: .2em; margin: 0 0 9px; }
-    h1 { margin: 0; font-size: clamp(27px, 4vw, 39px); line-height: 1.1; letter-spacing: -.04em; }
-    .intro-copy { max-width: 640px; margin: 12px 0 0; color: var(--muted); font-size: 13px; }
-    .snapshot-chip { min-width: 245px; border-left: 1px solid var(--line); padding: 3px 0 3px 18px; }
-    .snapshot-chip span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
-    .snapshot-chip strong { display: block; margin-top: 4px; font-size: 14px; font-weight: 600; }
-    .snapshot-chip small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
-    .notice { display: flex; align-items: flex-start; gap: 11px; padding: 12px 15px; border: 1px solid rgba(230, 191, 119, .25); border-radius: 12px; color: #e4d3ad; background: rgba(230, 191, 119, .055); font-size: 12px; }
-    .notice-mark { flex: 0 0 18px; width: 18px; height: 18px; display: grid; place-items: center; margin-top: 1px; border-radius: 50%; color: var(--bg); background: var(--amber); font-size: 11px; font-weight: 800; }
-    .notice strong { color: #f1dfb7; }
-    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin: 16px 0; }
-    .stat-card { min-height: 88px; padding: 13px 15px; border: 1px solid var(--line-soft); border-radius: 13px; background: rgba(17, 31, 34, .76); }
-    .stat-label { display: block; color: var(--muted); font-size: 10px; letter-spacing: .06em; }
-    .stat-value { display: block; margin-top: 5px; font-size: 20px; font-weight: 650; letter-spacing: -.03em; }
-    .stat-note { display: block; margin-top: 1px; color: var(--muted); font-size: 10px; }
-    .stat-value.review { color: var(--amber); }
-    .dashboard { display: grid; grid-template-columns: minmax(260px, .36fr) minmax(0, 1fr); gap: 16px; align-items: start; padding-bottom: 28px; }
-    .panel { border: 1px solid var(--line-soft); border-radius: var(--radius); background: rgba(17, 31, 34, .9); overflow: hidden; }
-    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 17px; border-bottom: 1px solid var(--line-soft); }
-    h2 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
-    .panel-sub { color: var(--muted); font-size: 10px; }
-    .fixture-list { display: grid; gap: 7px; padding: 10px; }
-    .fixture-button { width: 100%; text-align: left; color: inherit; cursor: pointer; padding: 12px; border: 1px solid transparent; border-radius: 11px; background: transparent; transition: background .15s ease, border-color .15s ease; }
-    .fixture-button:hover { background: rgba(255, 255, 255, .035); }
-    .fixture-button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
-    .fixture-button[aria-pressed="true"] { border-color: rgba(165, 239, 181, .26); background: rgba(165, 239, 181, .07); }
-    .fixture-topline { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .fixture-id { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-    .fixture-teams { display: block; margin-top: 8px; font-size: 14px; font-weight: 620; }
-    .fixture-date { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
-    .status { padding: 4px 8px; font-size: 10px; }
-    .status.ready { color: var(--mint); border-color: rgba(165, 239, 181, .25); background: rgba(165, 239, 181, .05); }
-    .status.needs_review { color: var(--amber); border-color: rgba(230, 191, 119, .27); background: rgba(230, 191, 119, .06); }
-    .status.blocked { color: var(--red); border-color: rgba(242, 154, 131, .28); background: rgba(242, 154, 131, .06); }
-    .list-foot { padding: 11px 16px 14px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; }
-    .detail { min-width: 0; }
-    .detail-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 17px 18px 14px; border-bottom: 1px solid var(--line-soft); }
-    .match-label { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
-    .match-title { margin: 5px 0 0; font-size: clamp(17px, 2.6vw, 23px); font-weight: 650; letter-spacing: -.035em; }
-    .match-title span { padding: 0 7px; color: var(--muted); font-size: 11px; font-weight: 400; }
-    .match-meta { margin-top: 5px; color: var(--muted); font-size: 10px; }
-    .team-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; }
-    .team-card { min-width: 0; padding: 13px; border: 1px solid var(--line-soft); border-radius: 13px; background: rgba(7, 18, 20, .35); }
-    .team-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; padding-bottom: 11px; border-bottom: 1px solid var(--line-soft); }
-    .team-side { display: block; color: var(--muted); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; }
-    .team-name { display: block; margin-top: 3px; font-size: 15px; font-weight: 650; }
-    .team-tag { color: var(--muted); font-size: 9px; text-align: right; }
-    .team-tag.unknown { color: var(--amber); }
-    .team-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 11px 0; }
-    .fact { min-width: 0; }
-    .fact-label { display: block; color: var(--muted); font-size: 9px; }
-    .fact-value { display: block; margin-top: 2px; font-size: 12px; font-variant-numeric: tabular-nums; }
-    .matrix-wrap { overflow-x: auto; }
-    .matrix { width: 100%; border-collapse: collapse; font-size: 10px; }
-    .matrix th { padding: 7px 5px; color: var(--muted); font-size: 9px; font-weight: 500; text-align: left; border-bottom: 1px solid var(--line-soft); }
-    .matrix td { padding: 8px 5px; vertical-align: top; border-bottom: 1px solid rgba(190, 219, 207, .065); font-variant-numeric: tabular-nums; }
-    .matrix th:first-child, .matrix td:first-child { padding-left: 0; }
-    .matrix th:not(:first-child), .matrix td:not(:first-child) { min-width: 82px; }
-    .matrix tr:last-child td { border-bottom: 0; }
-    .metric-label { color: #c9d5d0; white-space: nowrap; }
-    .metric-value { display: block; color: var(--text); }
-    .metric-meta { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }
-    .metric-flag { color: var(--amber); }
-    .venue-box { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; border-radius: 9px; background: rgba(255, 255, 255, .025); }
-    .venue-box + .venue-caption { margin-top: 5px; }
-    .venue-caption { color: var(--muted); font-size: 9px; }
-    .review-box { margin: 0 12px 12px; padding: 12px 13px; border: 1px solid rgba(230, 191, 119, .22); border-radius: 11px; background: rgba(230, 191, 119, .045); }
-    .review-title { margin: 0; color: #ecd6a6; font-size: 11px; font-weight: 650; }
-    .review-list { display: grid; gap: 6px; margin: 8px 0 0; padding-left: 16px; color: #d7c8a8; font-size: 10px; }
-    details.raw-reasons { margin-top: 8px; color: var(--muted); font-size: 9px; }
-    details.raw-reasons summary { cursor: pointer; }
-    .reason-code { display: block; overflow-wrap: anywhere; margin-top: 5px; color: #bdc7c1; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; }
-    .evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 12px 12px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 11px; color: var(--muted); font-size: 9px; }
-    .evidence strong { display: block; margin-bottom: 3px; color: #cbd7d1; font-size: 9px; font-weight: 600; }
-    .hash { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .empty, .load-error { margin: 12px; padding: 18px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; }
-    .load-error { color: #f1b2a0; border-color: rgba(242, 154, 131, .32); }
-    .footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0 24px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 9px; }
-    .footer strong { color: #d5dfd8; font-weight: 550; }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-    @media (max-width: 920px) {
-      .dashboard { grid-template-columns: minmax(220px, .42fr) minmax(0, 1fr); }
-      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .team-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 660px) {
-      .shell { width: min(100% - 28px, 520px); }
-      .topbar { min-height: 61px; }
-      .top-meta { gap: 5px; }
-      .pill { padding: 4px 8px; font-size: 9px; }
-      .intro { display: block; padding: 24px 0 16px; }
-      .intro-copy { font-size: 12px; }
-      .snapshot-chip { margin-top: 15px; padding-left: 12px; }
-      .summary { gap: 8px; margin: 12px 0; }
-      .stat-card { min-height: 78px; padding: 10px 11px; }
-      .stat-value { font-size: 17px; }
-      .dashboard { grid-template-columns: 1fr; gap: 11px; }
-      .fixture-list { grid-template-columns: 1fr; }
-      .footer { display: block; }
-      .footer span { display: block; margin-top: 4px; }
+    @media (max-width: 600px) {
+      .shell { width: min(100% - 32px, 1120px); }
+      .topbar { min-height: 66px; }
+      nav { gap: 10px; }
+      nav a:not(.nav-cta) { display: none; }
+      .nav-cta { min-height: 37px; padding: 0 12px; font-size: 11px; }
+      .hero { padding: 48px 0 44px; }
+      h1 { font-size: clamp(39px, 12vw, 54px); }
+      .hero-copy { font-size: 14px; }
+      .hero-note { gap: 9px 14px; }
+      .flow-card { padding: 21px; }
+      .section { padding: 49px 0; }
+      .cards, .boundary { grid-template-columns: 1fr; }
+      .feature { min-height: auto; }
+      .agent-panel { padding: 22px; }
+      .final-cta { display: block; padding: 24px; }
+      .final-cta .button { margin-top: 19px; }
+      footer { display: block; line-height: 1.8; }
+      footer span { display: block; margin-top: 6px; }
     }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
     }
   </style>
 </head>
 <body>
+  <a class="skip" href="#main">跳转至正文</a>
   <header class="topbar shell">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">MQ</span><span>MatchQuant<small>OFFLINE RESEARCH</small></span></div>
-    <div class="top-meta"><span class="pill demo">合成演示</span><span class="pill exp">M13A · 实验性</span></div>
+    <a class="brand" href="#top" aria-label="MatchQuant 首页">
+      <span class="brand-mark" aria-hidden="true">MQ</span>
+      <span>MatchQuant<small>RESEARCH ENGINE</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="#capabilities">项目能力</a>
+      <a href="#agent">Agent 协作</a>
+      <a href="#limits">研究边界</a>
+      <a class="nav-cta" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">GitHub 开源仓库 <span aria-hidden="true">↗</span></a>
+    </nav>
   </header>
-  <main class="shell">
-    <section class="intro" aria-labelledby="page-title">
+
+  <main id="main" class="shell">
+    <section id="top" class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">RESULT FACTORS / M13A</p>
-        <h1 id="page-title">赛果因子面板</h1>
-        <p class="intro-copy">查看历史结果形成的球队特征与样本边界。因子用于研究说明，不是胜平负概率，也不会改动已有预测。</p>
+        <p class="eyebrow">LOCAL FIRST · AUDITABLE · AGENT OPTIONAL</p>
+        <h1 id="hero-title">把足球研究，<br>留成可复核的证据。</h1>
+        <p class="hero-copy">MatchQuant 是一个本地优先的足球赛果研究引擎。明确输入数据与时间边界，通过 Python CLI 运行预测、回测和快照审计。核心可以独立使用，Agent 是可选的协作方式。</p>
+        <div class="hero-actions">
+          <a class="button" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">查看 GitHub 项目 <span aria-hidden="true">↗</span></a>
+          <a class="button secondary" href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noopener noreferrer">阅读安装与快速开始</a>
+        </div>
+        <div class="hero-note" aria-label="项目特点">
+          <span>本地 Python CLI</span><span>不要求 LLM API</span><span>不提供实时网页预测</span>
+        </div>
       </div>
-      <div class="snapshot-chip" aria-label="演示快照信息">
-        <span>演示 as-of</span>
-        <strong id="as-of">正在读取…</strong>
-        <small id="cutoff">历史 cutoff：正在读取…</small>
-      </div>
-    </section>
 
-    <div class="notice" role="note">
-      <span class="notice-mark" aria-hidden="true">!</span>
-      <div><strong>这是合成数据回放，不是当前赛程或实时预测。</strong> 查询状态和逐场原因按 M13A 原值展示；快照无法证明目标日期的历史覆盖完整。</div>
-    </div>
-
-    <section class="summary" id="summary" aria-label="演示数据摘要">
-      <div class="stat-card"><span class="stat-label">查询状态</span><span class="stat-value" id="query-status">读取中</span><span class="stat-note">M13A 原始状态</span></div>
-      <div class="stat-card"><span class="stat-label">演示赛事</span><span class="stat-value" id="fixture-count">—</span><span class="stat-note">score-free 输入</span></div>
-      <div class="stat-card"><span class="stat-label">ready</span><span class="stat-value" id="ready-count">—</span><span class="stat-note">仅代表本次计算有效，不代表覆盖完整</span></div>
-      <div class="stat-card"><span class="stat-label">needs_review</span><span class="stat-value review" id="review-count">—</span><span class="stat-note">小样本、未知球队等原始原因</span></div>
-    </section>
-
-    <div id="load-error" class="load-error" role="alert" hidden>演示数据加载失败。页面不会使用缓存或补造结果。</div>
-    <section class="dashboard" id="dashboard" aria-label="赛事因子工作区" hidden>
-      <aside class="panel" aria-labelledby="fixtures-title">
-        <div class="panel-head"><h2 id="fixtures-title">演示赛程</h2><span class="panel-sub" id="fixture-summary">—</span></div>
-        <div class="fixture-list" id="fixture-list"></div>
-        <div class="list-foot">选择一场查看主客队的因子、样本数和复核原因。</div>
+      <aside class="flow-card" aria-label="MatchQuant 研究流程">
+        <div class="card-kicker">A TRACEABLE WORKFLOW</div>
+        <h2 class="flow-title">每一步都有据可查</h2>
+        <div class="flow-step">
+          <span class="step-no">01</span>
+          <div><strong>指定输入与时间边界</strong><p>使用明确的本地历史、赛程和模型配置，不自动猜测最新数据。</p></div>
+        </div>
+        <div class="flow-step">
+          <span class="step-no">02</span>
+          <div><strong>通过 CLI 执行研究</strong><p>预测、回测、快照和因子查询由 MatchQuant 引擎完成。</p></div>
+        </div>
+        <div class="flow-step">
+          <span class="step-no">03</span>
+          <div><strong>检查报告与复核状态</strong><p>保留 manifest、哈希和结构化产物，明确标出限制与待复核项。</p></div>
+        </div>
+        <div class="flow-foot"><span>LOCAL DATA</span><span>EXPLICIT INPUT → REVIEWABLE OUTPUT</span></div>
       </aside>
-      <section class="panel detail" aria-labelledby="detail-heading">
-        <div id="detail"></div>
-      </section>
     </section>
-    <section id="empty-state" class="panel empty" hidden>快照没有可展示的赛事。状态与原因仍以原始输出为准。</section>
 
-    <footer class="footer">
-      <strong>研究展示 · 非投注建议 · 不构成校准或预测效果证据</strong>
-      <span id="generated-at">演示数据生成时间：—</span>
-    </footer>
+    <section id="capabilities" class="section" aria-labelledby="cap-title">
+      <div class="section-head">
+        <div><p class="section-label">PROJECT CAPABILITIES</p><h2 id="cap-title">研究引擎，不是网页产品。</h2></div>
+        <p class="section-intro">网页负责介绍项目和指向源码。真正的计算在本地 Python 环境中完成；你可以直接使用 CLI，也可以让 Agent 协助组织工作流。</p>
+      </div>
+      <div class="cards">
+        <article class="feature">
+          <div class="feature-icon" aria-hidden="true">01</div>
+          <h3>本地运行</h3>
+          <p>基于 Python、pandas 和 numpy。核心命令不依赖在线服务、数据库或 LLM API。</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon" aria-hidden="true">02</div>
+          <h3>可追溯的研究产物</h3>
+          <p>显式快照、输入绑定、哈希清单和状态报告，让研究结果可以复查与复现。</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon" aria-hidden="true">03</div>
+          <h3>Agent 可选协作</h3>
+          <p>仓库中的 AGENTS.md 记录项目约束。Agent 可以协助调用 CLI、梳理产物和解释状态，但不替代引擎。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="agent" class="section" aria-labelledby="agent-title">
+      <div class="section-head">
+        <div><p class="section-label">WORK WITH AN AGENT</p><h2 id="agent-title">Agent 是助手，不是依赖。</h2></div>
+        <p class="section-intro">你不需要 Agent 才能运行 MatchQuant。使用 Agent 时，它可以把研究意图整理成明确步骤，计算仍由本地 CLI 执行。</p>
+      </div>
+      <div class="agent-panel">
+        <div>
+          <h3>适合交给 Agent 的工作</h3>
+          <p>从项目根目录开始，让 Agent 阅读仓库规则和 README，再根据你提供的数据路径、赛季与研究边界，组织可审阅的命令与结果。</p>
+        </div>
+        <ul class="agent-list">
+          <li><span class="check">✓</span><span>先读 AGENTS.md，理解数据目录、输入输出和不可自动覆盖的边界。</span></li>
+          <li><span class="check">✓</span><span>帮你选择已有 CLI 工作流，并解释 ready、needs_review、blocked 等状态。</span></li>
+          <li><span class="check">✓</span><span>把结构化报告整理成易读摘要；关键研究判断仍由你复核。</span></li>
+          <li><span class="check">↗</span><span><a href="https://github.com/kenNethhao8/MatchQuant/blob/main/AGENTS.md" target="_blank" rel="noopener noreferrer">查看仓库中的 Agent 协作规则</a></span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="quickstart" class="section quickstart" aria-labelledby="quick-title">
+      <div>
+        <p class="section-label">QUICK START</p>
+        <h2 id="quick-title">从源码开始。</h2>
+        <p>克隆仓库后按 README 安装。先用内置合成样例熟悉流程，再接入你有权使用的本地数据。</p>
+        <a class="button secondary" href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noopener noreferrer">打开完整文档 <span aria-hidden="true">↗</span></a>
+      </div>
+      <pre aria-label="安装和查看命令帮助"><span class="code-comment"># Python 3.11+</span>
+git clone https://github.com/kenNethhao8/MatchQuant.git
+cd MatchQuant
+python -m pip install -e .
+python -m matchquant --help</pre>
+    </section>
+
+    <section id="limits" class="section" aria-labelledby="limits-title">
+      <div class="section-head">
+        <div><p class="section-label">RESEARCH BOUNDARIES</p><h2 id="limits-title">清楚标明能说明什么。</h2></div>
+        <p class="section-intro">项目用于本地研究和工程验证，不承诺未来预测表现，也不把计算状态包装成数据完整或已校准。</p>
+      </div>
+      <div class="boundary">
+        <article><strong>没有实时网页预测</strong><p>本站不接入在线赛程、新闻、伤停或赔率，也不在浏览器中复制 Python 模型逻辑。</p></article>
+        <article><strong>M13A 仍是实验功能</strong><p>赛果因子不调整胜平负概率。M13A 处于待独立评估状态，coverage 也不能由工程校验自动证明。</p></article>
+        <article><strong>样例数据是合成数据</strong><p>仓库中的演示样例不代表真实比赛或当前赛程。真实数据由使用者按授权在本地准备。</p></article>
+        <article><strong>研究结果不是投注建议</strong><p>预测、回测和因子报告不证明盈利、概率校准或未来表现。</p></article>
+      </div>
+    </section>
+
+    <section class="section" aria-label="查看开源项目">
+      <div class="final-cta">
+        <div><h2>从源码和研究规则开始。</h2><p>查看安装说明、示例输入、Agent 规则与完整技术文档。</p></div>
+        <a class="button" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">前往 GitHub 仓库 <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
   </main>
 
-  <script>
-    (function () {
-      "use strict";
-      var data = null;
-      var activeIndex = 0;
-      var labels = { ready: "ready · 可展示", needs_review: "needs_review · 需复核", blocked: "blocked · 已阻断" };
-      var errorBox = document.getElementById("load-error");
-
-      function el(tag, className, text) {
-        var node = document.createElement(tag);
-        if (className) node.className = className;
-        if (text !== undefined && text !== null) node.textContent = String(text);
-        return node;
-      }
-      function valueText(value, digits) {
-        if (value === null || value === undefined || !Number.isFinite(Number(value))) return "无可用值";
-        return Number(value).toFixed(digits === undefined ? 2 : digits);
-      }
-      function rateText(value) {
-        if (value === null || value === undefined || !Number.isFinite(Number(value))) return "无可用值";
-        return (Number(value) * 100).toFixed(1) + "%";
-      }
-      function statusText(status) { return labels[status] || String(status || "未知状态"); }
-      function statusTag(status) { return el("span", "status " + (status || "blocked"), statusText(status)); }
-      function setText(id, text) { document.getElementById(id).textContent = text; }
-
-      function explainReason(reason) {
-        if (reason.indexOf("_unknown_team:") >= 0) {
-          var team = reason.split(":").pop();
-          return "快照中没有 " + team + " 的历史记录；其 Elo 为先验值。";
-        }
-        if (reason.indexOf("_small_sample:") >= 0) {
-          var count = reason.split(":").pop();
-          return "可用历史只有 " + count + " 场，未达到最小样本门槛。";
-        }
-        return "需要按原始原因复核。";
-      }
-
-      function renderSummary() {
-        var counts = { ready: 0, needs_review: 0, blocked: 0 };
-        data.results.forEach(function (item) { counts[item.status] = (counts[item.status] || 0) + 1; });
-        setText("query-status", statusText(data.status));
-        setText("fixture-count", String(data.fixture_count));
-        setText("ready-count", String(counts.ready || 0));
-        setText("review-count", String(counts.needs_review || 0));
-        setText("fixture-summary", data.fixture_count + " 场 · " + (counts.needs_review || 0) + " 场需复核");
-        var asOf = data.as_of.value + (data.as_of.date_only ? " · 日期批次" : " · 精确时间");
-        setText("as-of", asOf);
-        setText("cutoff", "历史 cutoff：" + (data.used_data_cutoff || "无可用值") + " · 使用 " + data.rows_used + "/" + data.rows_total + " 行");
-        setText("generated-at", "演示数据生成时间：" + data.generated_at + "（UTC）");
-      }
-
-      function windowCell(windowData, key, type) {
-        var cell = el("td");
-        var value = type === "rate" ? rateText(windowData[key]) : valueText(windowData[key]);
-        cell.appendChild(el("span", "metric-value", value));
-        cell.appendChild(el("span", "metric-meta", "n=" + windowData.n + "/" + windowData.requested_window));
-        var flags = [];
-        if (windowData.small_sample) flags.push("小样本");
-        if (!windowData.window_complete) flags.push("窗口未满");
-        if (flags.length) cell.appendChild(el("span", "metric-meta metric-flag", flags.join(" · ")));
-        return cell;
-      }
-
-      function appendFactorTable(container, team) {
-        var wrap = el("div", "matrix-wrap");
-        var table = el("table", "matrix");
-        var caption = el("caption", "sr-only", "球队近期赛果因子与样本数");
-        table.appendChild(caption);
-        var head = document.createElement("thead");
-        var headRow = document.createElement("tr");
-        ["指标", "最近 5 场", "最近 10 场"].forEach(function (label) { headRow.appendChild(el("th", "", label)); });
-        head.appendChild(headRow);
-        table.appendChild(head);
-        var body = document.createElement("tbody");
-        var rows = [
-          ["积分率", "points_rate", "rate"],
-          ["场均进球", "goals_for_mean", "number"],
-          ["场均失球", "goals_against_mean", "number"],
-          ["对手赛前 Elo 均值", "opponent_pre_elo_mean", "number"]
-        ];
-        rows.forEach(function (spec) {
-          var row = document.createElement("tr");
-          row.appendChild(el("td", "metric-label", spec[0]));
-          row.appendChild(windowCell(team.recent_5, spec[1], spec[2]));
-          row.appendChild(windowCell(team.recent_10, spec[1], spec[2]));
-          body.appendChild(row);
-        });
-        table.appendChild(body);
-        wrap.appendChild(table);
-        container.appendChild(wrap);
-      }
-
-      function teamCard(team, side, venueLabel) {
-        var card = el("article", "team-card");
-        var head = el("div", "team-head");
-        var title = el("div");
-        title.appendChild(el("span", "team-side", side === "home" ? "HOME / 主队" : "AWAY / 客队"));
-        title.appendChild(el("span", "team-name", team.name));
-        head.appendChild(title);
-        head.appendChild(el("span", "team-tag" + (team.unknown_team ? " unknown" : ""), team.unknown_team ? "未知球队 · Elo 先验" : "历史中已出现"));
-        card.appendChild(head);
-
-        var facts = el("div", "team-facts");
-        var elo = el("div", "fact");
-        elo.appendChild(el("span", "fact-label", "当前 Elo"));
-        elo.appendChild(el("span", "fact-value", valueText(team.elo_rating, 1) + (team.elo_prior ? " · prior" : "")));
-        facts.appendChild(elo);
-        var appearances = el("div", "fact");
-        appearances.appendChild(el("span", "fact-label", "历史出场"));
-        appearances.appendChild(el("span", "fact-value", String(team.total_appearances)));
-        facts.appendChild(appearances);
-        var last = el("div", "fact");
-        last.appendChild(el("span", "fact-label", "最近一次已记录比赛"));
-        last.appendChild(el("span", "fact-value", team.last_match_date || "无可用值"));
-        facts.appendChild(last);
-        var rest = el("div", "fact");
-        rest.appendChild(el("span", "fact-label", "日历日期间隔"));
-        rest.appendChild(el("span", "fact-value", team.rest_calendar_days === null ? "无可用值" : String(team.rest_calendar_days) + " 天"));
-        facts.appendChild(rest);
-        card.appendChild(facts);
-
-        appendFactorTable(card, team);
-        var venue = el("div", "venue-box");
-        var venueFor = el("div", "fact");
-        venueFor.appendChild(el("span", "fact-label", "场地收缩进球均值"));
-        venueFor.appendChild(el("span", "fact-value", valueText(team.venue.goals_for_shrunk)));
-        venue.appendChild(venueFor);
-        var venueAgainst = el("div", "fact");
-        venueAgainst.appendChild(el("span", "fact-label", "场地收缩失球均值"));
-        venueAgainst.appendChild(el("span", "fact-value", valueText(team.venue.goals_against_shrunk)));
-        venue.appendChild(venueAgainst);
-        card.appendChild(venue);
-        card.appendChild(el("div", "venue-caption", venueLabel + "场地 · 样本 n=" + team.venue.sample_n + " · 联盟先验" + (team.venue.prior_used ? "已使用" : "未使用")));
-        if (team.unverified_intervening_matches) {
-          card.appendChild(el("div", "venue-caption", "日历间隔不核验中间是否另有比赛，不代表精确休息小时。"));
-        }
-        return card;
-      }
-
-      function renderDetail(index) {
-        activeIndex = index;
-        var fixture = data.results[index];
-        var list = document.getElementById("fixture-list");
-        Array.prototype.forEach.call(list.children, function (button, i) {
-          button.setAttribute("aria-pressed", i === index ? "true" : "false");
-        });
-
-        var detail = document.getElementById("detail");
-        detail.replaceChildren();
-        var top = el("div", "detail-top");
-        var identity = el("div");
-        identity.appendChild(el("div", "match-label", fixture.fixture_id + " · " + fixture.season));
-        var title = el("h2", "match-title");
-        title.id = "detail-heading";
-        title.appendChild(document.createTextNode(fixture.home_team + " "));
-        title.appendChild(el("span", "", "VS"));
-        title.appendChild(document.createTextNode(" " + fixture.away_team));
-        identity.appendChild(title);
-        identity.appendChild(el("div", "match-meta", fixture.date + " · 合成演示赛事"));
-        top.appendChild(identity);
-        top.appendChild(statusTag(fixture.status));
-        detail.appendChild(top);
-
-        if (fixture.status === "blocked") {
-          detail.appendChild(el("div", "empty", "本场因子查询被阻断，未展示有效因子。请查看下方原始原因。"));
-        } else {
-          var teams = el("div", "team-grid");
-          teams.appendChild(teamCard(Object.assign({ name: fixture.home_team }, fixture.home), "home", "主队"));
-          teams.appendChild(teamCard(Object.assign({ name: fixture.away_team }, fixture.away), "away", "客队"));
-          detail.appendChild(teams);
-        }
-
-        if (fixture.reasons && fixture.reasons.length) {
-          var review = el("section", "review-box");
-          review.setAttribute("aria-label", "需要复核的原因");
-          review.appendChild(el("p", "review-title", "本场需要复核"));
-          var listReasons = el("ul", "review-list");
-          fixture.reasons.forEach(function (reason) { listReasons.appendChild(el("li", "", explainReason(reason))); });
-          review.appendChild(listReasons);
-          var raw = el("details", "raw-reasons");
-          raw.appendChild(el("summary", "", "查看原始原因代码"));
-          fixture.reasons.forEach(function (reason) { raw.appendChild(el("code", "reason-code", reason)); });
-          review.appendChild(raw);
-          detail.appendChild(review);
-        }
-
-        var evidence = el("div", "evidence");
-        var coverage = el("div");
-        coverage.appendChild(el("strong", "", "覆盖状态"));
-        coverage.appendChild(document.createTextNode(data.coverage_status));
-        evidence.appendChild(coverage);
-        var adjustment = el("div");
-        adjustment.appendChild(el("strong", "", "概率调整"));
-        adjustment.appendChild(document.createTextNode(data.probability_adjustment_applied ? "已应用" : "未应用"));
-        evidence.appendChild(adjustment);
-        var source = el("div");
-        source.appendChild(el("strong", "", "合成数据版本"));
-        source.appendChild(document.createTextNode(data.source.dataset_version));
-        evidence.appendChild(source);
-        var snapshot = el("div");
-        snapshot.appendChild(el("strong", "", "快照状态 hash"));
-        snapshot.appendChild(el("span", "hash", data.snapshot.state_sha256));
-        evidence.appendChild(snapshot);
-        detail.appendChild(evidence);
-      }
-
-      function render() {
-        if (!data || data.schema_version !== "matchquant-sites-result-factor-demo-v1" || !Array.isArray(data.results) || data.fixture_count !== data.results.length || data.probability_adjustment_applied !== false) {
-          throw new Error("演示数据结构不匹配");
-        }
-        renderSummary();
-        var list = document.getElementById("fixture-list");
-        list.replaceChildren();
-        data.results.forEach(function (fixture, index) {
-          var button = el("button", "fixture-button");
-          button.type = "button";
-          button.setAttribute("aria-pressed", "false");
-          var line = el("span", "fixture-topline");
-          line.appendChild(el("span", "fixture-id", fixture.fixture_id));
-          line.appendChild(statusTag(fixture.status));
-          button.appendChild(line);
-          button.appendChild(el("span", "fixture-teams", fixture.home_team + "  vs  " + fixture.away_team));
-          button.appendChild(el("span", "fixture-date", fixture.date + " · " + fixture.season));
-          button.addEventListener("click", function () { renderDetail(index); });
-          list.appendChild(button);
-        });
-        document.getElementById("dashboard").hidden = data.results.length === 0;
-        document.getElementById("empty-state").hidden = data.results.length !== 0;
-        if (!data.results.length) return;
-        renderDetail(0);
-      }
-
-      fetch("./data/demo.json", { cache: "no-store" })
-        .then(function (response) {
-          if (!response.ok) throw new Error("演示数据不可用");
-          return response.json();
-        })
-        .then(function (result) {
-          data = result;
-          render();
-        })
-        .catch(function () {
-          errorBox.hidden = false;
-          document.getElementById("dashboard").hidden = true;
-          document.getElementById("empty-state").hidden = true;
-          setText("query-status", "数据不可用");
-        });
-    }());
-  </script>
+  <footer class="shell">
+    <a href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">MatchQuant · 开源足球研究引擎</a>
+    <span>本地优先 · Agent 可选 · 非实时预测 · 非投注建议</span>
+  </footer>
 </body>
 </html>

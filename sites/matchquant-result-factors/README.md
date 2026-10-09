@@ -1,17 +1,14 @@
-# MatchQuant 赛果因子面板
+# MatchQuant 项目介绍页
 
-这是一个私有 Sites 静态演示页，只读取 `dist/data/demo.json`。数据由 MatchQuant M13A 的公开快照和查询 API 从合成历史样例生成；不连接实时赛程、球队新闻或生产数据，也不计算或修改 1X2 概率。
+这是一个静态宣传页面，介绍 MatchQuant 的本地研究引擎、可复核工作流与可选的 Agent 协作方式，并引导访问 GitHub 开源仓库。它不提供网页预测、在线数据查询或浏览器端模型计算。
 
-## 本地生成演示数据
+项目核心是 Python 包与 CLI。无需 Agent 也可以独立运行；使用 Agent 时，Agent 负责协助组织命令、审阅输出和解释状态，计算仍由 MatchQuant 执行。
 
-在 MatchQuant 仓库根目录运行：
+页面链接：
+- GitHub 仓库：https://github.com/kenNethhao8/MatchQuant
+- 安装与使用：https://github.com/kenNethhao8/MatchQuant/blob/main/README.md
+- Agent 规则：https://github.com/kenNethhao8/MatchQuant/blob/main/AGENTS.md
 
-    .venv\Scripts\python.exe scripts\build_sites_demo.py
+## 本地预览
 
-脚本只读取 `examples/result_factor_history.csv`、其 manifest 和本目录的 score-free 演示赛程。它在系统临时目录构建快照/查询，只把不含本机绝对路径的 JSON 写到 `dist/data/demo.json`。
-
-演示历史截止 2024-08-15，as-of 为日期批次 2024-08-16；这不是当前赛程或实时数据。页面保留 M13A 的 `ready`、`needs_review`、`frozen_snapshot_coverage_not_verified` 和原始 reasons。M13A 因子仍是实验信息，不代表校准、因果关系或预测收益。
-
-## Sites
-
-纯静态 HTML，无 npm 依赖。Sites 配置将 `dist/` 作为唯一发布目录；本地 Sites 工作 checkout 被此目录下的 `.gitignore` 排除，不属于 MatchQuant 仓库源文件。
+从仓库根目录启动任意静态文件服务器，并打开 sites/matchquant-result-factors/dist/。页面不需要构建步骤、Node 依赖或运行时 API。
