@@ -114,6 +114,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of latest matches to include in radar (default: 10).",
     )
 
+    # 5. match-report: one explicit, cutoff-safe single-match prediction
+    report_parser = subparsers.add_parser(
+        "match-report",
+        help="Fit the existing chronological model on explicit local history and write one Chinese match report.",
+        description=(
+            "Predict one user-specified fixture from local rich history. "
+            "Specify either --fixtures with one score-free CSV row, or all of --home/--away/--date/--season."
+        ),
+    )
+    report_parser.add_argument("--input", required=True, help="Explicit local rich historical CSV; no discovery or download.")
+    report_parser.add_argument("--as-of", required=True, help="Prediction cutoff date, ISO YYYY-MM-DD (start of day).")
+    report_parser.add_argument("--output-root", required=True, help="Root directory for a new report run directory.")
+    report_parser.add_argument("--mode", choices=("research", "replay"), default="research")
+    report_parser.add_argument("--fixtures", help="Path to a CSV containing exactly one score-free fixture row.")
+    report_parser.add_argument("--home", help="Home team for direct fixture input.")
+    report_parser.add_argument("--away", help="Away team for direct fixture input.")
+    report_parser.add_argument("--date", dest="fixture_date", help="Fixture date, ISO YYYY-MM-DD.")
+    report_parser.add_argument("--season", help="Explicit fixture season, e.g. 2025-26.")
+    report_parser.add_argument("--team-aliases", help="Optional JSON mapping aliases to canonical historical team names.")
+    report_parser.add_argument("--market-input", help="Optional user-supplied pre-match 1X2/AH JSON.")
+    report_parser.add_argument(
+        "--max-data-age-days",
+        type=_nonnegative_int,
+        default=30,
+        help="Freshness review threshold in days (default: 30); this does not certify current data.",
+    )
+
     # 5. Legacy M1/M2/M3 commands preserved cleanly
     run_parser = subparsers.add_parser("run", help="Run baseline chronological walk-forward backtest.")
     run_parser.add_argument("--config", help="Path to JSON configuration file.")
@@ -142,7 +169,40 @@ def build_parser() -> argparse.ArgumentParser:
     sel_parser.add_argument("--output-root", default=r"D:\Codex\matchquant_runs")
     sel_parser.add_argument("--output-dir", default=None)
 
+    # 6. epl-sync: on-demand source synchronization with staging, diffing, and addition-only apply
+    sync_parser = subparsers.add_parser(
+        "epl-sync",
+        help="Synchronize EPL seasons on-demand with staging, diffing, and addition-only gates.",
+    )
+    sync_parser.add_argument("--data-root", default=r"D:\Codex\matchquant_data")
+    sync_parser.add_argument("--seasons", nargs="+", default=None)
+    sync_parser.add_argument("--in-progress-season", default=None)
+    sync_parser.add_argument("--dry-run", action="store_true", default=True)
+    sync_parser.add_argument("--apply", action="store_true", default=False)
+    sync_parser.add_argument("--timeout", type=float, default=30.0)
+
+    # 7. agent-adapter: machine-readable structured adapter for host Agent
+    adapter_parser = subparsers.add_parser(
+        "agent-adapter",
+        help="Structured JSON machine-readable adapter for host Agent orchestration.",
+    )
+    adapter_parser.add_argument(
+        "--action", choices=("setup", "sync", "readiness", "analyze", "followup"), default="analyze"
+    )
+    adapter_parser.add_argument("--request-json", help="Direct JSON request payload string.")
+    adapter_parser.add_argument("--request-file", help="Path to JSON request payload file.")
+
     return parser
+
+
+def _nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
 
 
 def _load_or_build_rich(input_csv: str, data_root: str) -> pd.DataFrame:
@@ -158,6 +218,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 1
+
+    if args.command == "match-report":
+        direct_values = (args.home, args.away, args.fixture_date, args.season)
+        if args.fixtures and any(value is not None for value in direct_values):
+            parser.error("match-report accepts either --fixtures or the four direct fixture fields, not both")
+        if not args.fixtures and not all(value is not None for value in direct_values):
+            parser.error("match-report requires --fixtures or all of --home, --away, --date, and --season")
 
     try:
         if args.command == "rich-prepare":
@@ -294,6 +361,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("=" * 155 + "\n")
             return 0
 
+        if args.command == "match-report":
+            from .single_match import run_single_match_report
+
+            report, paths = run_single_match_report(
+                input_path=args.input,
+                as_of=args.as_of,
+                output_root=args.output_root,
+                mode=args.mode,
+                fixture_csv=args.fixtures,
+                home=args.home,
+                away=args.away,
+                fixture_date=args.fixture_date,
+                season=args.season,
+                team_aliases_path=args.team_aliases,
+                market_input_path=args.market_input,
+                max_data_age_days=args.max_data_age_days,
+            )
+            fixture = report["fixture"]
+            status_text = "需要复核" if report["status"] == "needs_review" else "完成"
+            print(
+                f"单场报告{status_text} | 模式={report['temporal']['mode']} | "
+                f"{fixture['home_team']} vs {fixture['away_team']} ({fixture['date']}) | "
+                f"截止={report['temporal']['as_of']} | warnings={len(report['warnings'])}"
+            )
+            print(f"HTML: {paths['html']}\nMarkdown: {paths['markdown']}\nJSON: {paths['json']}")
+            return 2 if report["status"] == "needs_review" else 0
+
         if args.command == "run":
             cfg: dict[str, Any] = {}
             if args.config:
@@ -385,7 +479,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Selection complete: selected={sel['selected_candidate']['candidate_name']} output={out_dir}")
             return 0
 
-    except (DataValidationError, FileNotFoundError, ValueError, OSError) as exc:
+        if args.command == "epl-sync":
+            from .sync import sync_epl
+            is_dry = not args.apply
+            res = sync_epl(
+                data_root=args.data_root,
+                seasons=args.seasons,
+                in_progress_season=args.in_progress_season,
+                dry_run=is_dry,
+                apply=args.apply,
+                timeout=args.timeout,
+            )
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0 if res["status"] in ("dry_run_ok", "applied") else 1
+
+        if args.command == "agent-adapter":
+            from .adapter import handle_adapter_cli
+            return handle_adapter_cli(args)
+
+    except (DataValidationError, FileNotFoundError, OSError) as exc:
+        print(f"matchquant error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        if args.command == "match-report":
+            raise
         print(f"matchquant error: {exc}", file=sys.stderr)
         return 1
     return 0

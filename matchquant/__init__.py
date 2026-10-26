@@ -62,6 +62,12 @@ from .rich_data import (
     devig_power_probabilities,
     discover_raw_epl_files,
 )
+from .single_match import (
+    SingleMatchError,
+    build_query_features,
+    normalize_fixture,
+    run_single_match_report,
+)
 from .schema import DataValidationError, REQUIRED_COLUMNS, validate_matches
 from .selection import load_candidates, parse_validation_folds, run_nested_selection
 
@@ -93,8 +99,10 @@ __all__ = [
     "REQUIRED_COLUMNS",
     "RICH_CANONICAL_COLUMNS",
     "TeamDynamicState",
+    "SingleMatchError",
     "audit_source_frame",
     "build_historical_factor_panel",
+    "build_query_features",
     "build_rich_epl_dataset",
     "calibration_diagnostics",
     "compute_quantile_profile",
@@ -117,6 +125,7 @@ __all__ = [
     "load_matches",
     "multiclass_ece",
     "normalize_season",
+    "normalize_fixture",
     "parse_validation_folds",
     "prepare_epl",
     "reliability_table",
@@ -126,6 +135,7 @@ __all__ = [
     "run_models",
     "run_nested_selection",
     "run_quant_research_pipeline",
+    "run_single_match_report",
     "run_walk_forward",
     "source_url",
     "stable_match_id",

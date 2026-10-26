@@ -1,0 +1,41 @@
+{
+  "schema_version": "matchquant-profile-v1",
+  "data_root": "D:\\Codex\\matchquant_data",
+  "report_root": "D:\\Codex\\matchquant_runs",
+  "python_executable": "D:\\Dev\\Python314\\python.exe",
+  "provider": "football_data_epl",
+  "competition": "English Premier League",
+  "historical_start_season": "2015-16",
+  "in_progress_season": null,
+  "team_aliases": {
+    "曼城": "Man City",
+    "曼彻斯特城": "Man City",
+    "曼联": "Man United",
+    "曼彻斯特联": "Man United",
+    "阿森纳": "Arsenal",
+    "利物浦": "Liverpool",
+    "切尔西": "Chelsea",
+    "热刺": "Tottenham",
+    "纽卡": "Newcastle",
+    "纽卡斯尔联": "Newcastle",
+    "维拉": "Aston Villa",
+    "阿斯顿维拉": "Aston Villa",
+    "布莱顿": "Brighton",
+    "森林": "Nottingham Forest",
+    "诺丁汉森林": "Nottingham Forest",
+    "狼队": "Wolves",
+    "西汉姆": "West Ham",
+    "西汉姆联": "West Ham"
+  },
+  "refresh_policy": {
+    "auto_refresh": true,
+    "source_check_interval_hours": 24,
+    "allow_stale_fallback": false
+  },
+  "timezone": "Asia/Shanghai",
+  "report_preferences": {
+    "language": "zh-CN",
+    "style": "standard",
+    "default_model_profile": "dual_track_v2"
+  }
+}

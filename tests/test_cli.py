@@ -34,6 +34,28 @@ class CliV2Tests(unittest.TestCase):
         self.assertEqual(parsed.input, "test.csv")
         self.assertEqual(parsed.top_n, 5)
 
+    def test_single_match_parser_supports_csv_and_direct_inputs(self) -> None:
+        parser = build_parser()
+        common = [
+            "match-report",
+            "--input",
+            "history.csv",
+            "--as-of",
+            "2026-05-23",
+            "--output-root",
+            "runs",
+        ]
+        csv_args = parser.parse_args([*common, "--fixtures", "fixture.csv", "--mode", "replay"])
+        self.assertEqual(csv_args.command, "match-report")
+        self.assertEqual(csv_args.fixtures, "fixture.csv")
+        direct_args = parser.parse_args(
+            [*common, "--home", "Man City", "--away", "Aston Villa", "--date", "2026-05-24", "--season", "2025-26"]
+        )
+        self.assertEqual(direct_args.home, "Man City")
+        self.assertEqual(direct_args.fixture_date, "2026-05-24")
+        with self.assertRaises(SystemExit):
+            parser.parse_args([*common, "--fixtures", "fixture.csv", "--max-data-age-days", "-1"])
+
     def test_baseline_run_cli_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary) / "run"

@@ -634,24 +634,32 @@ class ChronologicalFactorEngine:
             h = self.teams[h_name]
             a = self.teams[a_name]
 
+            def _stat_value(column: str, default: float) -> float:
+                value = row.get(column, default)
+                try:
+                    parsed = float(value)
+                except (TypeError, ValueError):
+                    return default
+                return parsed if math.isfinite(parsed) else default
+
             hg = float(row["home_goals"])
             ag = float(row["away_goals"])
-            hthg = float(row.get("ht_home_goals", 0))
-            htag = float(row.get("ht_away_goals", 0))
-            shhg = float(row.get("sh_home_goals", hg - hthg))
-            shag = float(row.get("sh_away_goals", ag - htag))
-            hs = float(row.get("home_shots", 13.0))
-            as_ = float(row.get("away_shots", 11.0))
-            hst = float(row.get("home_sot", 4.5))
-            ast = float(row.get("away_sot", 4.0))
-            hc = float(row.get("home_corners", 5.5))
-            ac = float(row.get("away_corners", 4.5))
-            hf = float(row.get("home_fouls", 10.5))
-            af = float(row.get("away_fouls", 11.0))
-            hy = float(row.get("home_yellow", 1.5))
-            ay = float(row.get("away_yellow", 1.7))
-            hr = float(row.get("home_red", 0.05))
-            ar = float(row.get("away_red", 0.06))
+            hthg = _stat_value("ht_home_goals", 0.0)
+            htag = _stat_value("ht_away_goals", 0.0)
+            shhg = _stat_value("sh_home_goals", hg - hthg)
+            shag = _stat_value("sh_away_goals", ag - htag)
+            hs = _stat_value("home_shots", 13.0)
+            as_ = _stat_value("away_shots", 11.0)
+            hst = _stat_value("home_sot", 4.5)
+            ast = _stat_value("away_sot", 4.0)
+            hc = _stat_value("home_corners", 5.5)
+            ac = _stat_value("away_corners", 4.5)
+            hf = _stat_value("home_fouls", 10.5)
+            af = _stat_value("away_fouls", 11.0)
+            hy = _stat_value("home_yellow", 1.5)
+            ay = _stat_value("away_yellow", 1.7)
+            hr = _stat_value("home_red", 0.05)
+            ar = _stat_value("away_red", 0.06)
 
             # Opponent strength offset based on pre-match Elo difference
             elo_gap = (h_elo - a_elo) / 400.0

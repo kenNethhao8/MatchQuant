@@ -213,26 +213,33 @@ def convert_raw_epl_season(source: pd.DataFrame, season: str) -> pd.DataFrame:
 
     fthg = _first_available_numeric(df, ["FTHG"]).astype(int)
     ftag = _first_available_numeric(df, ["FTAG"]).astype(int)
-    hthg = _first_available_numeric(df, ["HTHG"], default=0.0).astype(int)
-    htag = _first_available_numeric(df, ["HTAG"], default=0.0).astype(int)
+    hthg = _first_available_numeric(df, ["HTHG"])
+    htag = _first_available_numeric(df, ["HTAG"])
 
     result = np.where(fthg > ftag, "H", np.where(fthg < ftag, "A", "D"))
-    ht_result = np.where(hthg > htag, "H", np.where(hthg < htag, "A", "D"))
-    sh_home_goals = fthg - hthg
-    sh_away_goals = ftag - htag
+    ht_result = np.where(
+        hthg.notna() & htag.notna(),
+        np.where(hthg > htag, "H", np.where(hthg < htag, "A", "D")),
+        "",
+    )
+    sh_home_goals = np.where(hthg.notna(), fthg - hthg, np.nan)
+    sh_away_goals = np.where(htag.notna(), ftag - htag, np.nan)
 
-    hs = _first_available_numeric(df, ["HS"], default=0.0).astype(int)
-    as_ = _first_available_numeric(df, ["AS"], default=0.0).astype(int)
-    hst = _first_available_numeric(df, ["HST"], default=0.0).astype(int)
-    ast = _first_available_numeric(df, ["AST"], default=0.0).astype(int)
-    hc = _first_available_numeric(df, ["HC"], default=0.0).astype(int)
-    ac = _first_available_numeric(df, ["AC"], default=0.0).astype(int)
-    hf = _first_available_numeric(df, ["HF"], default=0.0).astype(int)
-    af = _first_available_numeric(df, ["AF"], default=0.0).astype(int)
-    hy = _first_available_numeric(df, ["HY"], default=0.0).astype(int)
-    ay = _first_available_numeric(df, ["AY"], default=0.0).astype(int)
-    hr = _first_available_numeric(df, ["HR"], default=0.0).astype(int)
-    ar = _first_available_numeric(df, ["AR"], default=0.0).astype(int)
+    # Preserve unavailable technical statistics as missing (NaN).
+    # Downstream factor engine uses documented internal priors where needed,
+    # but raw conversion must never turn missing shots/corners/fouls into observed 0.0.
+    hs = _first_available_numeric(df, ["HS"])
+    as_ = _first_available_numeric(df, ["AS"])
+    hst = _first_available_numeric(df, ["HST"])
+    ast = _first_available_numeric(df, ["AST"])
+    hc = _first_available_numeric(df, ["HC"])
+    ac = _first_available_numeric(df, ["AC"])
+    hf = _first_available_numeric(df, ["HF"])
+    af = _first_available_numeric(df, ["AF"])
+    hy = _first_available_numeric(df, ["HY"])
+    ay = _first_available_numeric(df, ["AY"])
+    hr = _first_available_numeric(df, ["HR"])
+    ar = _first_available_numeric(df, ["AR"])
 
     # Opening 1X2 odds: prioritize Pinnacle (PSH/PSD/PSA), fallback to Market Avg then Bet365
     odds_open_h = _first_available_numeric(df, ["PSH", "AvgH", "BbAvH", "B365H", "BWH"])
@@ -263,7 +270,9 @@ def convert_raw_epl_season(source: pd.DataFrame, season: str) -> pd.DataFrame:
     )
 
     # Asian Handicap line (home team handicap, e.g. -1.5 means home favored by 1.5 goals)
-    mkt_ah_line = _first_available_numeric(df, ["AHh", "BbAHh"], default=0.0)
+    # Preserve unavailable Asian-handicap quotes as missing. Downstream M-Open
+    # must not silently treat an absent line as a neutral 0.0 handicap.
+    mkt_ah_line = _first_available_numeric(df, ["AHh", "BbAHh"])
 
     rich = pd.DataFrame(
         {

@@ -8,3 +8,4 @@ matchquant_runs/
 build/
 dist/
 wheelhouse/
+*.zip
