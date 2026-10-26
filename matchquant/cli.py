@@ -1,1172 +1,395 @@
-"""Command-line entry point for MatchQuant M1-M12."""
+"""Clean CLI for MatchQuant v2.0 Quantitative Football Engine."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
-import importlib.resources
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+import numpy as np
 import pandas as pd
 
+from . import __version__
 from .backtest import run_models
-from .demo_export import export_synthetic_demo
 from .epl import DEFAULT_EPL_SEASONS, download_epl, prepare_epl
-from .epl_fixtures import prepare_epl_fixtures
-from .epl_local_stage import stage_local_epl_source
-from .epl_sync import sync_epl
-from .engine_snapshot import build_engine_snapshot, predict_from_engine_snapshot
-from .engine_snapshot_status import check_engine_snapshot_status
-from .result_factor_snapshot import build_result_factor_snapshot, query_result_factors
-from .forecast import load_model_config, run_forecast
-from .forecast_session import run_forecast_session
-from .postmatch_session import run_postmatch_session
+from .factor_engine import build_historical_factor_panel
+from .factor_lab import render_factor_lab_report, run_factor_lab
 from .io import file_sha256, load_matches, write_json, write_predictions
-from .m3 import dataset_provenance, new_run_dir
 from .models import MODEL_NAMES
+from .quant_models import _clip_probs, fit_and_select_factor_system
+from .quant_pipeline import run_quant_research_pipeline
+from .rich_data import build_rich_epl_dataset
 from .schema import DataValidationError
-from .selection import SELECTION_SCHEMA_VERSION, load_candidates, parse_validation_folds, run_nested_selection
-from .settlement import settle_forecast_run
-from .release_verify import verify_release
-from .runtime_bundle import build_runtime_bundle
-from .runtime_bundle_validation import verify_runtime_bundle
-from .snapshot_run_verify import verify_snapshot_run
-from .snapshot_session import run_snapshot_session
+from .selection import load_candidates, parse_validation_folds, run_nested_selection
 
 
-def default_m3_candidate_config() -> Path:
-    """Path of the packaged default M3 candidate configuration.
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="matchquant",
+        description="MatchQuant v2.0: Quantitative Football Factor Engineering & Modeling Engine.",
+    )
+    parser.add_argument("--version", action="version", version=f"matchquant {__version__}")
+    subparsers = parser.add_subparsers(dest="command")
 
-    The resource ships inside the wheel (``matchquant/resources/``), so the
-    default also works from a real install outside the source checkout; an
-    explicit ``--candidate-config`` keeps its old semantics and overrides it.
-    """
+    # 1. rich-prepare: Unlock all 44 pitch & market columns from raw E0 CSVs
+    rich_prep = subparsers.add_parser(
+        "rich-prepare",
+        help="Build full-spectrum Rich Match Table from raw E0 CSVs (shots, SOT, corners, HT, cards, referee, odds).",
+    )
+    rich_prep.add_argument(
+        "--data-root",
+        default=r"D:\Codex\matchquant_data",
+        help="Root directory containing raw/E0_*.csv and optional staging/*/raw/E0_*.csv.",
+    )
+    rich_prep.add_argument(
+        "--output",
+        default=r"D:\Codex\matchquant_data\processed\epl_rich_canonical.csv",
+        help="Output CSV path for the Rich Match Table.",
+    )
+    rich_prep.add_argument("--seasons", nargs="+", default=None, help="Optional season filter.")
 
-    resource = importlib.resources.files("matchquant") / "resources" / "m3_candidates.json"
-    with importlib.resources.as_file(resource) as path:
-        return Path(path)
-
-
-def _version_text() -> str:
-    try:
-        package_version = importlib.metadata.version("matchquant")
-    except importlib.metadata.PackageNotFoundError:
-        package_version = "0.0.0+uninstalled"
-    return (
-        f"matchquant {package_version} (baseline-v0.1 research build; research software, "
-        "not a live prediction product)"
+    # 2. factor-lab: Single-factor IC, Orthogonal Alpha over Elo, 5-quantile monotonicity & VIF
+    flab = subparsers.add_parser(
+        "factor-lab",
+        help="Run Alphalens-style single-factor IC, Elo-orthogonal residual t-stats, 5-quantile & VIF diagnostics.",
     )
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="matchquant", description="Reproducible football 1X2 research engine")
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=_version_text(),
-        help="show the installed package version (metadata-driven) and the baseline-v0.1 research profile, then exit",
+    flab.add_argument(
+        "--input",
+        default=r"D:\Codex\matchquant_data\processed\epl_rich_canonical.csv",
+        help="Path to Rich Match Table CSV (or built automatically from --data-root if missing).",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    run = subparsers.add_parser(
-        "run",
-        help="run an offline walk-forward backtest (online means batch-by-batch model-state updating, not the network)",
+    flab.add_argument(
+        "--data-root",
+        default=r"D:\Codex\matchquant_data",
+        help="Fallback raw data root if --input does not yet exist.",
     )
-    run.add_argument("--config", type=Path, help="optional JSON configuration")
-    run.add_argument("--input", type=Path, help="canonical match CSV")
-    run.add_argument("--test-start", help="first test date/time; date-only starts are calendar-day aligned")
-    run.add_argument("--test-end", help="optional exclusive test end date/time")
-    run.add_argument("--model", choices=[*MODEL_NAMES, "all"], help="model or all three")
-    run.add_argument("--season-mode", choices=["carry", "reset"], help="carry or reset online state across seasons")
-    run.add_argument("--output-dir", type=Path, help="directory for predictions, metrics, and run config")
-    select = subparsers.add_parser(
-        "select",
-        help="M3 strict chronological model selection with calibration diagnostics (diagnostics only, not calibrated probabilities)",
-    )
-    select.add_argument("--input", type=Path, required=True, help="local canonical match CSV")
-    select.add_argument(
-        "--candidate-config",
-        "--candidates",
-        type=Path,
-        default=default_m3_candidate_config(),
-        help="candidate configuration JSON (default: the packaged m3_candidates.json resource)",
-    )
-    select.add_argument(
-        "--validation-fold",
-        dest="validation_folds",
-        action="append",
-        required=True,
-        metavar="START..END",
-        help="repeat for chronological, non-overlapping validation periods",
-    )
-    select.add_argument(
-        "--final-test-start",
-        "--test-start",
-        dest="final_test_start",
-        required=True,
-        help="first final-test batch; final test is never used for selection",
-    )
-    select.add_argument("--final-test-end", "--test-end", dest="final_test_end")
-    select.add_argument("--season-mode", choices=["carry", "reset"], default="carry")
-    select.add_argument("--calibration-bins", type=int, default=10)
-    select.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"))
-    forecast = subparsers.add_parser(
-        "forecast",
-        help="run one offline local fixture forecast (M4 research snapshot; not live data, not an Alpha/factor engine)",
-    )
-    forecast.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
-    forecast.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
-    forecast.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
-    selection = forecast.add_mutually_exclusive_group(required=True)
-    selection.add_argument(
-        "--selection-run-config", "--selection-config", "--selection-run", "--m3-run-config",
-        dest="selection_run_config", type=Path,
-        help="explicit M3 selection run_config.json",
-    )
-    selection.add_argument("--model", choices=MODEL_NAMES, help="explicit model name; requires --model-config")
-    forecast.add_argument("--model-config", "--config", type=Path, help="JSON config for the explicit --model")
-    forecast.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
-    forecast.add_argument(
-        "--output-root", "--output-dir", dest="output_root", type=Path,
-        default=Path(r"D:\Codex\matchquant_runs"), help="root for a new timestamped forecast directory",
-    )
-    snapshot_build = subparsers.add_parser(
-        "engine-snapshot-build",
-        help="build an offline M11 model-state snapshot from explicit history evidence",
-    )
-    snapshot_build.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
-    snapshot_build.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
-    snapshot_build.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
-    snapshot_selection = snapshot_build.add_mutually_exclusive_group(required=True)
-    snapshot_selection.add_argument(
-        "--selection-run-config", "--selection-config", dest="selection_run_config", type=Path,
-        help="explicit M3 selection run_config.json",
-    )
-    snapshot_selection.add_argument(
-        "--model", action="append", choices=MODEL_NAMES, help="repeat for each explicit model",
-    )
-    snapshot_build.add_argument(
-        "--model-config", action="append", type=Path,
-        help="repeat in the same order as --model; each is a JSON model config",
-    )
-    snapshot_build.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
-    snapshot_build.add_argument(
-        "--snapshot-root", type=Path, default=Path(r"D:\Codex\matchquant_data\engine_snapshots"),
-        help="root for a new immutable M11 snapshot directory",
-    )
-    snapshot_predict = subparsers.add_parser(
-        "engine-snapshot-predict",
-        help="predict from an explicit M11 snapshot without loading history",
-    )
-    snapshot_predict.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
-    snapshot_predict.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
-    snapshot_predict.add_argument(
-        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
-        help="root for a new timestamped M11 prediction directory",
-    )
-    snapshot_status = subparsers.add_parser(
-        "engine-snapshot-status",
-        help="audit one explicit M11 snapshot against one explicit M2.1 current pointer",
-    )
-    snapshot_status.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit M11 snapshot_manifest.json")
-    snapshot_status.add_argument("--current-pointer", type=Path, required=True, help="explicit M2.1 epl_current.json")
-    snapshot_status.add_argument(
-        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
-        help="root for a new timestamped M12 status audit directory",
-    )
-    result_factor_build = subparsers.add_parser(
-        "result-factor-build",
-        help="build an offline M13A result-factor snapshot from explicit canonical history evidence",
-    )
-    result_factor_build.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
-    result_factor_build.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
-    result_factor_build.add_argument("--as-of", required=True, help="snapshot date/time; date-only excludes that full day")
-    result_factor_build.add_argument("--output-root", type=Path, required=True, help="safe root for a new result-factor snapshot directory")
-    result_factor_query = subparsers.add_parser(
-        "result-factor-query",
-        help="query an explicit M13A factor snapshot with score-free fixtures only",
-    )
-    result_factor_query.add_argument("--factor-manifest", type=Path, required=True, help="explicit factor_manifest.json")
-    result_factor_query.add_argument("--fixtures", type=Path, required=True, help="local score-free pending fixture CSV")
-    result_factor_query.add_argument("--output-root", type=Path, required=True, help="safe root for a new factor-query directory")
-    snapshot_session = subparsers.add_parser(
-        "snapshot-session",
-        help="run one offline single-model M11 snapshot prediction session with a read-only audit",
-    )
-    session_source = snapshot_session.add_mutually_exclusive_group(required=True)
-    session_source.add_argument(
-        "--snapshot-manifest", type=Path, default=None,
-        help="explicit M11 snapshot_manifest.json (bare mode)",
-    )
-    session_source.add_argument(
-        "--bundle-manifest", type=Path, default=None,
-        help="explicit runtime bundle_manifest.json (B04 bundle mode; mutually exclusive with --snapshot-manifest)",
-    )
-    snapshot_session.add_argument("--fixtures", type=Path, required=True, help="explicit score-free fixture CSV")
-    snapshot_session.add_argument("--mode", choices=["replay", "research"], default="replay", help="replay (retrospective) or research (pending coverage review)")
-    snapshot_session.add_argument(
-        "--output-root", type=Path, required=True,
-        help="root for the new unique session directory (must be outside formal roots, inputs, and the bundle)",
-    )
-    snapshot_session.add_argument(
-        "--issue-evidence", type=Path, default=None,
-        help="optional M12 snapshot_status.json (bare mode only; bundle mode reads the bundled record)",
-    )
-    snapshot_verify = subparsers.add_parser(
-        "snapshot-run-verify",
-        help="read-only audit of one existing single-model M11 snapshot prediction run",
-    )
-    snapshot_verify.add_argument("--forecast-run", type=Path, required=True, help="completed single-model M11 snapshot prediction run directory")
-    snapshot_verify.add_argument(
-        "--output-root", type=Path, required=True,
-        help="root for the new unique audit directory (must be outside formal roots, inputs, and the bundle)",
-    )
-    verify_evidence = snapshot_verify.add_mutually_exclusive_group()
-    verify_evidence.add_argument(
-        "--issue-evidence", type=Path, default=None,
-        help="optional M12 snapshot_status.json (m12-engine-snapshot-status-v1)",
-    )
-    verify_evidence.add_argument(
-        "--bundle-manifest", type=Path, default=None,
-        help="explicit runtime bundle_manifest.json (B04 bundle mode; mutually exclusive with --issue-evidence)",
-    )
-    bundle_build = subparsers.add_parser(
-        "runtime-bundle-build",
-        help="build one portable single-model runtime bundle from a fresh-at-issue M12 record",
-    )
-    bundle_build.add_argument("--snapshot-manifest", type=Path, required=True, help="explicit single-model M11 snapshot_manifest.json (read-only input)")
-    bundle_build.add_argument(
-        "--issue-audit", type=Path, required=True,
-        help="explicit original M12 snapshot_status.json (m12-engine-snapshot-status-v1), fresh at issue",
-    )
-    bundle_build.add_argument(
-        "--output-root", type=Path, required=True,
-        help="root for the new unique build job directory (must be outside formal roots, inputs, and source code)",
-    )
-    bundle_verify = subparsers.add_parser(
-        "runtime-bundle-verify",
-        help="read-only verification of one runtime bundle against its own manifest",
-    )
-    bundle_verify.add_argument("--bundle-manifest", type=Path, required=True, help="explicit runtime bundle_manifest.json")
-    demo_export = subparsers.add_parser(
-        "demo-export",
-        help=(
-            "export the packaged synthetic demo (frequency bundle, fixtures, results, DEMO.md) to one new "
-            "directory; offline, no training/prediction/settlement"
-        ),
-    )
-    demo_export.add_argument(
+    flab.add_argument(
         "--output-dir",
-        type=Path,
-        required=True,
-        help=(
-            "new directory to create; it must not already exist and cannot be inside the formal "
-            "data/runs roots or the package/source tree"
-        ),
+        default=r"D:\Codex\matchquant_runs\factor_lab_v2",
+        help="Directory to write factor_lab_report.md and factor_lab_metrics.json.",
     )
-    download = subparsers.add_parser("epl-download", help="download explicit Football-Data.co.uk EPL seasons")
-    download.add_argument(
-        "--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS), help="seasons such as 2015-16 (default: ten complete seasons)"
+
+    # 3. quant-research: Full end-to-end Factor Lab + Dual-Track Modeling + Multi-Benchmark Validation
+    qres = subparsers.add_parser(
+        "quant-research",
+        help="Run end-to-end factor engineering, Factor Lab screening, Dual-Track (Fundamental & Market) modeling, and out-of-sample evaluation.",
     )
-    download.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
-    download.add_argument("--timeout", type=float, default=30.0)
-    prepare = subparsers.add_parser("epl-prepare", help="offline-convert downloaded EPL CSVs to M1 canonical CSV")
-    prepare.add_argument("--seasons", nargs="+", help="seasons to convert; default: every season in source manifest")
-    prepare.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
-    prepare.add_argument("--output", type=Path, help="canonical CSV path")
-    prepare.add_argument("--quality-report", type=Path, help="quality JSON path")
-    prepare.add_argument("--processed-manifest", type=Path, help="processed manifest JSON path")
-    sync = subparsers.add_parser("epl-sync", help="explicit EPL staging sync and offline diff")
-    sync_sources = sync.add_mutually_exclusive_group(required=True)
-    sync_sources.add_argument("--seasons", nargs="+", help="seasons to download, such as 2025-26")
-    sync_sources.add_argument("--staging-dir", type=Path, help="existing local staging snapshot; performs no network access")
-    sync_mode = sync.add_mutually_exclusive_group()
-    sync_mode.add_argument("--apply", action="store_true", help="activate only an addition-only candidate")
-    sync_mode.add_argument("--dry-run", action="store_true", help="compare without changing the active pointer (default)")
-    sync.add_argument("--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"))
-    sync.add_argument("--baseline", type=Path, help="optional baseline canonical CSV")
-    sync.add_argument("--processed-manifest", type=Path, help="optional baseline processed manifest")
-    sync.add_argument("--current-pointer", type=Path, help="optional current pointer path")
-    sync.add_argument("--in-progress-season", help="explicitly allow an incomplete requested season, such as 2025-26")
-    sync.add_argument("--timeout", type=float, default=30.0)
-    local_stage = subparsers.add_parser(
-        "epl-local-stage",
-        help="offline-archive one local E0 result file for the M2.1 sync review",
+    qres.add_argument(
+        "--input",
+        default=r"D:\Codex\matchquant_data\processed\epl_rich_canonical.csv",
+        help="Path to Rich Match Table CSV.",
     )
-    local_stage.add_argument("--source-csv", type=Path, required=True, help="explicit local E0-compatible CSV")
-    local_stage.add_argument("--season", required=True, help="explicit season such as 2025-26")
-    local_stage.add_argument("--source-url", help="optional URL recorded as provenance only; no network access")
-    local_stage.add_argument("--source-label", help="optional human-readable provenance label")
-    local_stage.add_argument(
-        "--upstream-retrieved-at",
-        "--source-retrieved-at",
-        dest="upstream_retrieved_at",
-        help="optional user-provided upstream retrieval time; local archive time is never used here",
+    qres.add_argument(
+        "--data-root",
+        default=r"D:\Codex\matchquant_data",
+        help="Fallback raw data root if --input does not yet exist.",
     )
-    local_stage.add_argument(
-        "--data-dir", type=Path, default=Path(r"D:\Codex\matchquant_data"),
-        help="root for immutable M7 local staging snapshots",
+    qres.add_argument(
+        "--output-dir",
+        default=r"D:\Codex\matchquant_runs\quant_v2_research",
+        help="Directory to write reports, metrics, weights, and out-of-sample predictions.",
     )
-    fixture_prepare = subparsers.add_parser(
-        "epl-fixtures-prepare",
-        help="offline-copy and normalize one local Football-Data E0 fixture source",
+
+    # 4. matchday-radar: Pre-match multi-model quantitative decision radar for the latest round
+    radar_parser = subparsers.add_parser(
+        "matchday-radar",
+        help="Display pre-match quantitative radar for the latest round of matches (Elo, Track A, Track M-Open, xG, OrthoEdge, Top Drivers).",
     )
-    fixture_prepare.add_argument("--source-csv", type=Path, required=True, help="explicit local E0-compatible CSV")
-    fixture_prepare.add_argument("--season", required=True, help="explicit season such as 2025-26")
-    fixture_prepare.add_argument("--source-url", help="optional URL recorded as provenance only; no network access")
-    fixture_prepare.add_argument("--source-label", help="optional human-readable provenance label")
-    fixture_prepare.add_argument("--baseline-fixtures", type=Path, help="optional local M4 fixture CSV for report-only diff")
-    fixture_prepare.add_argument(
-        "--data-root", "--data-dir", dest="data_root", type=Path,
-        default=Path(r"D:\Codex\matchquant_data"),
-        help="root for immutable fixture snapshots",
+    radar_parser.add_argument(
+        "--input",
+        default=r"D:\Codex\matchquant_data\processed\epl_rich_canonical.csv",
+        help="Path to Rich Match Table CSV.",
     )
-    settle = subparsers.add_parser(
-        "settle", help="offline-settle one M4 or single-model M11 prediction run with local M1 results"
+    radar_parser.add_argument(
+        "--data-root",
+        default=r"D:\Codex\matchquant_data",
+        help="Fallback raw data root if --input does not yet exist.",
     )
-    settle.add_argument(
-        "--forecast-run", "--forecast-run-dir", "--forecast-dir", dest="forecast_run",
-        type=Path, required=True, help="completed M4 forecast or single-model M11 snapshot prediction run directory",
+    radar_parser.add_argument(
+        "--top-n",
+        type=int,
+        default=10,
+        help="Number of latest matches to include in radar (default: 10).",
     )
-    settle.add_argument(
-        "--results", "--results-csv", dest="results", type=Path, required=True,
-        help="explicit local M1 canonical final-results CSV",
-    )
-    settle.add_argument(
-        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
-        help="root for a new timestamped M6 settlement directory",
-    )
-    release = subparsers.add_parser(
-        "release-verify", help="offline M8 audit of one explicit M4/M2/M5 evidence chain",
-    )
-    release.add_argument(
-        "--forecast-run", "--forecast-run-dir", dest="forecast_run", type=Path, required=True,
-        help="explicit completed M4 forecast run directory",
-    )
-    release.add_argument("--history", "--history-csv", dest="history", type=Path, required=True, help="explicit M2/M2.1 canonical history CSV")
-    release.add_argument("--history-manifest", type=Path, required=True, help="explicit M2/M2.1 processed manifest JSON")
-    release.add_argument("--fixture-manifest", "--fixture-snapshot-manifest", dest="fixture_manifest", type=Path, required=True, help="explicit M5 fixture_snapshot_manifest.json")
-    release.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"), help="root for one new timestamped M8 audit directory")
-    session = subparsers.add_parser(
-        "forecast-session", help="offline explicit M5 -> M4 -> M8 pre-match session",
-    )
-    session.add_argument("--history", type=Path, required=True, help="local canonical results CSV")
-    session.add_argument("--history-manifest", type=Path, required=True, help="local processed history manifest JSON")
-    session.add_argument("--fixture-source", type=Path, required=True, help="local E0-compatible fixture source CSV")
-    session.add_argument("--season", required=True, help="explicit season such as 2025-26")
-    session.add_argument("--as-of", required=True, help="forecast snapshot date/time")
-    session_selection = session.add_mutually_exclusive_group(required=True)
-    session_selection.add_argument(
-        "--selection-run-config", "--selection-config", "--m3-run-config",
-        dest="selection_run_config", type=Path, help="explicit M3 selection run_config.json",
-    )
-    session_selection.add_argument("--model", choices=MODEL_NAMES, help="explicit model name; requires --model-config")
-    session.add_argument("--model-config", "--config", type=Path, help="JSON config for the explicit --model")
-    session.add_argument("--season-mode", choices=["carry", "reset"], help="online state handling across seasons")
-    session.add_argument("--source-url", help="provenance text only; no network access")
-    session.add_argument("--source-label", help="provenance text only; no network access")
-    session.add_argument(
-        "--fixture-data-root", type=Path, default=Path(r"D:\Codex\matchquant_data"),
-        help="root for the new immutable M5 fixture snapshot",
-    )
-    session.add_argument(
-        "--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"),
-        help="root for unique M4, M8, and M9 artifacts",
-    )
-    postmatch = subparsers.add_parser(
-        "postmatch-session", help="offline explicit M7 -> M2.1 -> M6 post-match session",
-    )
-    postmatch.add_argument("--session-manifest", type=Path, required=True, help="explicit M9 session_manifest.json")
-    postmatch_sources = postmatch.add_mutually_exclusive_group(required=True)
-    postmatch_sources.add_argument("--results-source", type=Path, help="local E0 results CSV; stages only")
-    postmatch_sources.add_argument("--staging-dir", type=Path, help="existing M7/M2.1 staging snapshot")
-    postmatch.add_argument("--season", required=True, help="explicit season such as 2025-26")
-    postmatch_mode = postmatch.add_mutually_exclusive_group()
-    postmatch_mode.add_argument("--apply", action="store_true", help="apply the reviewed staging snapshot and settle M6")
-    postmatch_mode.add_argument("--dry-run", action="store_true", help="stage and compare only (default)")
-    postmatch.add_argument("--in-progress-season", help="explicit incomplete-season exception passed to M2.1")
-    postmatch.add_argument("--source-url", help="provenance text only for a fresh local stage; no network access")
-    postmatch.add_argument("--source-label", help="provenance text only for a fresh local stage")
-    postmatch.add_argument("--upstream-retrieved-at", "--source-retrieved-at", dest="upstream_retrieved_at", help="optional timezone-aware upstream retrieval time")
-    postmatch.add_argument("--data-root", type=Path, default=Path(r"D:\Codex\matchquant_data"), help="M7/M2.1 data root")
-    postmatch.add_argument("--output-root", type=Path, default=Path(r"D:\Codex\matchquant_runs"), help="root for unique M10/M6 artifacts")
-    postmatch.add_argument("--current-pointer", type=Path, help="optional active M2.1 pointer for apply coherence")
+
+    # 5. Legacy M1/M2/M3 commands preserved cleanly
+    run_parser = subparsers.add_parser("run", help="Run baseline chronological walk-forward backtest.")
+    run_parser.add_argument("--config", help="Path to JSON configuration file.")
+    run_parser.add_argument("--input", help="Path to canonical matches CSV.")
+    run_parser.add_argument("--test-start", dest="test_start", help="Inclusive test start date.")
+    run_parser.add_argument("--test-end", dest="test_end", help="Exclusive test end date.")
+    run_parser.add_argument("--model", choices=(*MODEL_NAMES, "all"), help="Baseline model.")
+    run_parser.add_argument("--season-mode", dest="season_mode", choices=("carry", "reset"))
+    run_parser.add_argument("--output-dir", dest="output_dir", help="Output directory.")
+
+    dl_parser = subparsers.add_parser("epl-download", help="Download raw Football-Data.co.uk E0 CSVs.")
+    dl_parser.add_argument("--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS))
+    dl_parser.add_argument("--data-dir", default=r"D:\Codex\matchquant_data")
+
+    prep_parser = subparsers.add_parser("epl-prepare", help="Prepare basic 7-column M1 canonical CSV.")
+    prep_parser.add_argument("--seasons", nargs="+", default=list(DEFAULT_EPL_SEASONS))
+    prep_parser.add_argument("--data-dir", default=r"D:\Codex\matchquant_data")
+    prep_parser.add_argument("--output", default=None)
+
+    sel_parser = subparsers.add_parser("select", help="Run nested chronological baseline selection.")
+    sel_parser.add_argument("--input", required=True)
+    sel_parser.add_argument("--candidate-config", default="examples/m3_candidates.json")
+    sel_parser.add_argument("--validation-fold", dest="validation_folds", action="append", required=True)
+    sel_parser.add_argument("--final-test-start", required=True)
+    sel_parser.add_argument("--final-test-end", default=None)
+    sel_parser.add_argument("--output-root", default=r"D:\Codex\matchquant_runs")
+    sel_parser.add_argument("--output-dir", default=None)
+
     return parser
 
 
-def _read_config(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"could not read config '{path}': {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("config root must be a JSON object")
-    return payload
+def _load_or_build_rich(input_csv: str, data_root: str) -> pd.DataFrame:
+    in_path = Path(input_csv)
+    if in_path.exists():
+        return pd.read_csv(in_path)
+    return build_rich_epl_dataset(data_root, output_csv=in_path)
 
 
-def _merged_options(args: argparse.Namespace) -> dict[str, Any]:
-    options = _read_config(args.config)
-    overrides = {
-        "input": args.input,
-        "test_start": args.test_start,
-        "test_end": args.test_end,
-        "model": args.model,
-        "season_mode": args.season_mode,
-        "output_dir": args.output_dir,
-    }
-    for key, value in overrides.items():
-        if value is not None:
-            options[key] = value
-    if options.get("input") is None:
-        raise ValueError("--input or config field 'input' is required")
-    if options.get("test_start") is None:
-        raise ValueError("--test-start or config field 'test_start' is required")
-    options.setdefault("model", "all")
-    options.setdefault("season_mode", "carry")
-    options.setdefault("output_dir", Path(r"D:\Codex\matchquant_runs\latest"))
-    options["input"] = Path(options["input"])
-    options["output_dir"] = Path(options["output_dir"])
-    options["model_configs"] = options.get("models", options.get("model_configs", {}))
-    if not isinstance(options["model_configs"], dict):
-        raise ValueError("config field 'models' must be a JSON object")
-    return options
-
-
-def _model_names(value: str) -> list[str]:
-    return list(MODEL_NAMES) if value == "all" else [value]
-
-
-def _run(args: argparse.Namespace) -> int:
-    options = _merged_options(args)
-    input_path = options["input"].expanduser().resolve()
-    output_dir = options["output_dir"].expanduser().resolve()
-    matches = load_matches(input_path)
-    input_hash = file_sha256(input_path)
-    data_cutoff = str(matches["date"].max())
-    names = _model_names(str(options["model"]))
-    configs = {name: options["model_configs"].get(name, {}) for name in names}
-    runs = run_models(
-        matches,
-        names,
-        options["test_start"],
-        test_end=options.get("test_end"),
-        season_mode=str(options["season_mode"]),
-        model_configs=configs,
-    )
-
-    prediction_frame = pd.concat([runs[name].predictions for name in names], ignore_index=True)
-    prediction_path = write_predictions(prediction_frame, output_dir / "predictions.csv")
-    metrics_payload = {
-        "schema_version": "m1",
-        "input": str(input_path),
-        "input_sha256": input_hash,
-        "data_cutoff": data_cutoff,
-        "test_start": str(options["test_start"]),
-        "test_end": options.get("test_end"),
-        "season_mode": str(options["season_mode"]),
-        "models": {name: runs[name].metrics for name in names},
-    }
-    metrics_path = write_json(metrics_payload, output_dir / "metrics.json")
-    config_payload = {
-        "schema_version": "m1",
-        "input": str(input_path),
-        "input_sha256": input_hash,
-        "data_cutoff": data_cutoff,
-        "test_start": str(options["test_start"]),
-        "test_end": options.get("test_end"),
-        "season_mode": str(options["season_mode"]),
-        "models": {name: configs[name] for name in names},
-        "outputs": {
-            "predictions": str(prediction_path),
-            "metrics": str(metrics_path),
-            "run_config": str(output_dir / "run_config.json"),
-        },
-    }
-    config_path = write_json(config_payload, output_dir / "run_config.json")
-    total_test = runs[names[0]].test_matches
-    print("MatchQuant M1 complete")
-    print(f"models={','.join(names)} test_matches={total_test}")
-    print(f"predictions={prediction_path}")
-    print(f"metrics={metrics_path}")
-    print(f"run_config={config_path}")
-    return 0
-
-
-def _select(args: argparse.Namespace) -> int:
-    input_path = args.input.expanduser().resolve()
-    candidate_path = args.candidate_config.expanduser().resolve()
-    matches = load_matches(input_path)
-    candidates, candidate_payload = load_candidates(candidate_path)
-    folds = parse_validation_folds(args.validation_folds)
-    result = run_nested_selection(
-        matches,
-        candidates,
-        folds,
-        args.final_test_start,
-        final_test_end=args.final_test_end,
-        season_mode=args.season_mode,
-        calibration_bins=args.calibration_bins,
-    )
-    run_dir = new_run_dir(args.output_root.expanduser().resolve())
-    input_hash = file_sha256(input_path)
-    candidate_hash = file_sha256(candidate_path)
-    provenance = dataset_provenance(input_path, matches)
-    selected = result["selected_candidate"]
-    final_run = result["final_run"]
-    predictions_path = write_predictions(final_run.predictions, run_dir / "predictions.csv")
-    calibration_path = run_dir / "calibration_reliability.csv"
-    result["calibration_table"].to_csv(calibration_path, index=False, encoding="utf-8")
-    validation_path = write_json(
-        {
-            "schema_version": "m3-validation-v1",
-            "input": str(input_path),
-            "input_sha256": input_hash,
-            "data_cutoff": provenance["data_cutoff"],
-            "data_version": provenance["dataset_version"],
-            "candidate_config": str(candidate_path),
-            "candidate_config_sha256": candidate_hash,
-            "validation_folds": result["validation_folds"],
-            "selection_rule": result["selection_rule"],
-            "candidates": result["candidates"],
-            "ranking": result["ranking"],
-            "selected_candidate": selected,
-        },
-        run_dir / "validation_metrics.json",
-    )
-    final_metrics_payload = {
-        "schema_version": "m3-final-metrics-v1",
-        "input": str(input_path),
-        "input_sha256": input_hash,
-        "data_cutoff": provenance["data_cutoff"],
-        "data_version": provenance["dataset_version"],
-        "data_provenance_status": provenance["status"],
-        "candidate": {
-            "candidate_name": selected["candidate_name"],
-            "candidate_order": selected["candidate_order"],
-            "model": selected["model"],
-            "config": selected["config"],
-            "configuration_sha256": selected["configuration_sha256"],
-        },
-        "test_boundary": result["final_test"],
-        "training_matches": int(final_run.training_matches),
-        "test_matches": int(final_run.test_matches),
-        "metrics": result["final_metrics"],
-        "calibration_status": "diagnostic_only_not_calibrated",
-        "calibration": {
-            **result["calibration_summary"],
-            "reliability_table": str(calibration_path),
-        },
-    }
-    final_metrics_path = write_json(final_metrics_payload, run_dir / "final_metrics.json")
-    run_config_path = run_dir / "run_config.json"
-    run_config = {
-        "schema_version": SELECTION_SCHEMA_VERSION,
-        "command": "matchquant select",
-        "generated_at": pd.Timestamp.utcnow().floor("s").isoformat().replace("+00:00", "Z"),
-        "input": str(input_path),
-        "input_sha256": input_hash,
-        "input_rows": int(len(matches)),
-        "data_cutoff": provenance["data_cutoff"],
-        "data_version": provenance["dataset_version"],
-        "data_provenance": provenance,
-        "candidate_config": {
-            "path": str(candidate_path),
-            "sha256": candidate_hash,
-            "payload": candidate_payload,
-        },
-        "season_mode": args.season_mode,
-        "validation_folds": result["validation_folds"],
-        "final_test": result["final_test"],
-        "selection_rule": result["selection_rule"],
-        "validation_metrics": result["candidates"],
-        "ranking": result["ranking"],
-        "selected_candidate": selected,
-        "final_test_metrics": final_metrics_payload["metrics"],
-        "calibration": final_metrics_payload["calibration"],
-        "outputs": {
-            "run_dir": str(run_dir),
-            "validation_metrics": str(validation_path),
-            "predictions": str(predictions_path),
-            "final_metrics": str(final_metrics_path),
-            "calibration_reliability": str(calibration_path),
-            "run_config": str(run_config_path),
-        },
-    }
-    config_path = write_json(run_config, run_config_path)
-    print("MatchQuant M3 selection complete")
-    print(f"selected={selected['candidate_name']} model={selected['model']} final_test_matches={final_run.test_matches}")
-    print(f"run_dir={run_dir}")
-    print(f"validation_metrics={validation_path}")
-    print(f"predictions={predictions_path}")
-    print(f"final_metrics={final_metrics_path}")
-    print(f"calibration_reliability={calibration_path}")
-    print(f"run_config={config_path}")
-    return 0
-
-
-def _forecast(args: argparse.Namespace) -> int:
-    result = run_forecast(
-        args.history,
-        args.fixtures,
-        args.as_of,
-        selection_run_config_path=args.selection_run_config,
-        model_name=args.model,
-        model_config_path=args.model_config,
-        season_mode=args.season_mode,
-        output_root=args.output_root,
-    )
-    run = result["run"]
-    print("MatchQuant M4 forecast complete")
-    print(f"model={run.model_name} fixtures={len(run.predictions)} history_rows_used={run.history_rows_used}")
-    print(f"as_of={run.as_of['value']} selection_evidence={result['selection_evidence_status']}")
-    print(f"predictions={result['predictions_path']}")
-    print(f"forecast_report={result['forecast_report_path']}")
-    print(f"run_config={result['run_config_path']}")
-    return 0
-
-
-def _engine_snapshot_build(args: argparse.Namespace) -> int:
-    if args.selection_run_config is not None:
-        if args.model_config:
-            raise ValueError("--selection-run-config and --model-config are mutually exclusive")
-        result = build_engine_snapshot(
-            args.history,
-            args.history_manifest,
-            args.as_of,
-            selection_run_config_path=args.selection_run_config,
-            output_root=args.snapshot_root,
-            season_mode=args.season_mode,
-        )
-    else:
-        names = args.model or []
-        config_paths = args.model_config or []
-        if not names:
-            raise ValueError("provide --model at least once or --selection-run-config")
-        if len(config_paths) != len(names):
-            raise ValueError("each --model must have one matching --model-config")
-        configs: dict[str, dict[str, Any]] = {}
-        sources: dict[str, Path] = {}
-        for name, path in zip(names, config_paths):
-            if name in configs:
-                raise ValueError("--model values must be unique")
-            configs[name] = load_model_config(path, name)
-            sources[name] = path
-        result = build_engine_snapshot(
-            args.history,
-            args.history_manifest,
-            args.as_of,
-            model_names=names,
-            model_configs=configs,
-            model_config_paths=sources,
-            output_root=args.snapshot_root,
-            season_mode=args.season_mode,
-        )
-    manifest = result["manifest"]
-    print("MatchQuant M11 engine snapshot build complete")
-    print(f"models={','.join(result['model_names'])} rows_used={manifest['history']['rows_used_before_as_of']} as_of={manifest['as_of']['value']}")
-    print(f"snapshot_dir={result['snapshot_dir']}")
-    print(f"snapshot_manifest={result['snapshot_manifest_path']}")
-    print(f"model_states={result['model_states_path']}")
-    print(f"snapshot_manifest_sha256={result['manifest_sha256']}")
-    return 0
-
-
-def _engine_snapshot_predict(args: argparse.Namespace) -> int:
-    result = predict_from_engine_snapshot(
-        args.snapshot_manifest,
-        args.fixtures,
-        output_root=args.output_root,
-    )
-    print("MatchQuant M11 engine snapshot predict complete")
-    print(f"models={','.join(result['config']['model_names'])} predictions={len(result['predictions'])}")
-    print(f"predictions={result['predictions_path']}")
-    print(f"snapshot_report={result['snapshot_report_path']}")
-    print(f"run_config={result['run_config_path']}")
-    return 0
-
-
-def _result_factor_build(args: argparse.Namespace) -> int:
-    result = build_result_factor_snapshot(
-        args.history,
-        args.history_manifest,
-        args.as_of,
-        output_root=args.output_root,
-    )
-    print(f"status={result['status']}")
-    print(f"rows_total={result.get('rows_total')}")
-    print(f"rows_used={result.get('rows_used')}")
-    print(f"used_data_cutoff={result.get('used_data_cutoff')}")
-    print(f"snapshot_dir={result['output_dir']}")
-    if result.get("manifest_path"):
-        print(f"factor_manifest={result['manifest_path']}")
-    if result.get("state_path"):
-        print(f"team_factor_state={result['state_path']}")
-    print(f"factor_build_report={result['report_path']}")
-    for reason in result.get("reasons", []):
-        print(f"reason={reason}")
-    return 1 if result["status"] == "blocked" else 2 if result["status"] == "needs_review" else 0
-
-
-def _result_factor_query(args: argparse.Namespace) -> int:
-    result = query_result_factors(
-        args.factor_manifest,
-        args.fixtures,
-        output_root=args.output_root,
-    )
-    print(f"status={result['status']}")
-    print(f"fixtures={result.get('fixture_count', 0)}")
-    print(f"factor_query={result['query_path']}")
-    if result.get("csv_path"):
-        print(f"factor_features={result['csv_path']}")
-    print(f"factor_query_report={result['report_path']}")
-    for reason in result.get("reasons", []):
-        print(f"reason={reason}")
-    return 1 if result["status"] == "blocked" else 2 if result["status"] == "needs_review" else 0
-
-
-def _engine_snapshot_status(args: argparse.Namespace) -> int:
-    result = check_engine_snapshot_status(
-        args.snapshot_manifest,
-        args.current_pointer,
-        output_root=args.output_root,
-    )
-    print(f"MatchQuant M12 engine snapshot status {result['status']}")
-    print(f"snapshot={args.snapshot_manifest}")
-    print(f"current_pointer={args.current_pointer}")
-    print(f"status_manifest={result['status_manifest_path']}")
-    print(f"status_report={result['status_report_path']}")
-    return 0 if result["status"] in {"fresh", "stale"} else 2
-
-
-_SNAPSHOT_STATUS_EXIT = {"ready": 0, "needs_review": 2, "blocked": 1}
-_SNAPSHOT_EXPECTED_ERRORS = (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError)
-
-
-def _artifact_note(output_root: Path, kind: str) -> str:
-    """Honest stderr note: report what actually exists instead of claiming nothing was saved."""
-
-    from .snapshot_audit_support import AUDIT_DIR_PREFIX, SESSION_DIR_PREFIX
-
-    try:
-        root = Path(output_root).expanduser().resolve()
-        existing = (
-            sorted(
-                entry.name
-                for entry in root.iterdir()
-                if entry.is_dir()
-                and (entry.name.startswith(SESSION_DIR_PREFIX) or entry.name.startswith(AUDIT_DIR_PREFIX))
-            )
-            if root.is_dir()
-            else []
-        )
-    except OSError:
-        existing = []
-    if existing:
-        preview = ", ".join(existing[:3]) + ("..." if len(existing) > 3 else "")
-        return (
-            f"note: {len(existing)} {kind} director{'y' if len(existing) == 1 else 'ies'} already exist "
-            f"under {root} ({preview}); the failure happened after their creation and saved artifacts "
-            "may be incomplete"
-        )
-    return f"no {kind} artifacts were saved (the output was refused, unwritable, or never created)"
-
-
-def _print_write_errors(result: dict[str, Any], stream: Any) -> None:
-    for error in result.get("output_write_errors") or []:
-        print(f"note: some artifacts could not be written: {error}", file=stream)
-
-
-def _snapshot_session(args: argparse.Namespace) -> int:
-    try:
-        result = run_snapshot_session(
-            args.snapshot_manifest,
-            args.fixtures,
-            mode=args.mode,
-            output_root=args.output_root,
-            issue_evidence_path=args.issue_evidence,
-            bundle_manifest_path=args.bundle_manifest,
-        )
-    except _SNAPSHOT_EXPECTED_ERRORS as exc:
-        print(f"MatchQuant snapshot-session blocked: {exc}", file=sys.stderr)
-        print(_artifact_note(args.output_root, "session"), file=sys.stderr)
-        return 1
-    _print_write_errors(result, sys.stderr)
-    print(f"MatchQuant snapshot session {result['status']}")
-    print(f"mode={result['mode']} audit_status={result['audit_status']}")
-    if result["reasons"]:
-        print(f"reasons={','.join(result['reasons'])}")
-    _print_session_evidence_summary(result)
-    print(f"session_dir={result['session_dir']}")
-    print(f"prediction_run={result['prediction_run_dir']}")
-    print(f"session_manifest={result['session_manifest_path']}")
-    print(f"session_report={result['session_report_path']}")
-    return _SNAPSHOT_STATUS_EXIT[result["status"]]
-
-
-def _print_session_evidence_summary(result: dict[str, Any]) -> None:
-    """Show model/as_of/used-cutoff/bundle identity from this session's strict evidence.
-
-    Everything comes from the manifest built during this run; missing fields are
-    printed as 'unavailable' instead of being backfilled from history files.
-    """
-
-    manifest = result.get("manifest") or {}
-    snapshot = manifest.get("snapshot") or {}
-    model_names = snapshot.get("model_names") or []
-    as_of = snapshot.get("as_of")
-    as_of_value = as_of.get("value") if isinstance(as_of, dict) else as_of
-    print(
-        "model={model} as_of={as_of} used_data_cutoff={cutoff}".format(
-            model=",".join(str(name) for name in model_names) if model_names else "unavailable",
-            as_of=as_of_value or "unavailable",
-            cutoff=snapshot.get("used_data_cutoff") or "unavailable",
-        )
-    )
-    bundle = manifest.get("bundle") or {}
-    if bundle:
-        print(
-            "bundle_root={root} bundle_snapshot_id={snapshot} fresh_at_issue={fresh} "
-            "active_link_status={link}".format(
-                root=bundle.get("bundle_root") or "unavailable",
-                snapshot=bundle.get("snapshot_id") or "unavailable",
-                fresh=bundle.get("fresh_at_issue") if bundle.get("fresh_at_issue") is not None else "unavailable",
-                link=bundle.get("active_link_status") or "unavailable",
-            )
-        )
-
-
-def _snapshot_run_verify(args: argparse.Namespace) -> int:
-    try:
-        result = verify_snapshot_run(
-            args.forecast_run,
-            output_root=args.output_root,
-            issue_evidence_path=args.issue_evidence,
-            bundle_manifest_path=args.bundle_manifest,
-        )
-    except _SNAPSHOT_EXPECTED_ERRORS as exc:
-        print(f"MatchQuant snapshot-run-verify blocked: {exc}", file=sys.stderr)
-        print(_artifact_note(args.output_root, "audit"), file=sys.stderr)
-        return 1
-    print(f"MatchQuant snapshot run audit {result['status']}")
-    if result["reasons"]:
-        print(f"reasons={','.join(result['reasons'])}")
-    print(f"forecast_run={result['run_dir']}")
-    print(f"audit_dir={result['audit_dir']}")
-    print(f"prediction_audit={result['prediction_audit_path']}")
-    print(f"audit_report={result['prediction_audit_report_path']}")
-    return _SNAPSHOT_STATUS_EXIT[result["status"]]
-
-
-def _runtime_bundle_build(args: argparse.Namespace) -> int:
-    try:
-        result = build_runtime_bundle(
-            args.snapshot_manifest,
-            args.issue_audit,
-            output_root=args.output_root,
-        )
-    except _SNAPSHOT_EXPECTED_ERRORS as exc:
-        print(f"MatchQuant runtime-bundle-build blocked: {exc}", file=sys.stderr)
-        return 1
-    print(f"MatchQuant runtime bundle build {result['status']}")
-    if result["reasons"]:
-        print(f"reasons={'; '.join(result['reasons'])}")
-    for error in result.get("output_write_errors") or []:
-        print(
-            f"note: some required build artifacts could not be persisted: {error}; "
-            "existing artifacts stay on disk, and the job record lists the final delivery state",
-            file=sys.stderr,
-        )
-    print(f"snapshot_id={result['snapshot_id']}")
-    print(f"build_dir={result['build_dir']}")
-    print(f"bundle_dir={result['bundle_dir']}")
-    if result["bundle_manifest_sha256"]:
-        print(f"bundle_manifest={result['bundle_manifest_path']}")
-        print(f"bundle_manifest_sha256={result['bundle_manifest_sha256']}")
-    print(f"files={result['file_count']} actual_files={result['actual_file_count']} payload_bytes={result['payload_bytes']} total_bytes={result['total_bytes']} limit_bytes={result['limit_bytes']}")
-    return 0 if result["status"] == "ready" else 1
-
-
-def _runtime_bundle_verify(args: argparse.Namespace) -> int:
-    try:
-        result = verify_runtime_bundle(args.bundle_manifest)
-    except _SNAPSHOT_EXPECTED_ERRORS as exc:
-        print(f"MatchQuant runtime-bundle-verify blocked: {exc}", file=sys.stderr)
-        return 1
-    print(f"MatchQuant runtime bundle verify {result['status']}")
-    if result["reasons"]:
-        print(f"reasons={'; '.join(result['reasons'])}")
-    if result["snapshot_id"]:
-        print(f"snapshot_id={result['snapshot_id']}")
-    print(f"bundle_root={result['bundle_root']}")
-    print(f"files={result['file_count']} total_bytes={result['total_bytes']}")
-    return 0 if result["status"] == "ready" else 1
-
-
-def _demo_export(args: argparse.Namespace) -> int:
-    try:
-        result = export_synthetic_demo(args.output_dir)
-    except _SNAPSHOT_EXPECTED_ERRORS as exc:
-        print(f"MatchQuant demo-export failed: {exc}", file=sys.stderr)
-        return 1
-    print("MatchQuant synthetic demo export complete")
-    print(
-        "synthetic=true model=frequency (tutorial only; not a real primary-model selection)"
-    )
-    print(f"demo_dir={result['demo_dir']}")
-    print(f"bundle_manifest={result['bundle_manifest']}")
-    print(f"bundle_manifest_sha256={result['bundle_manifest_sha256']}")
-    print(f"fixtures={result['fixtures']}")
-    print(f"results={result['results']}")
-    print(f"demo_doc={result['demo_doc']}")
-    print(f"demo_manifest={result['demo_manifest']}")
-    print(
-        f"files={result['files_exported']} bundle_verify={result['bundle_verify_status']} "
-        f"snapshot_id={result['snapshot_id']}"
-    )
-    print("next: follow the demo README section or DIR/DEMO.md (verify -> session -> audit -> settle)")
-    return 0
-
-
-def _epl_download(args: argparse.Namespace) -> int:
-    manifest = download_epl(args.seasons, args.data_dir, timeout=args.timeout)
-    print("MatchQuant M2 EPL download complete")
-    print(f"seasons={','.join(manifest['requested_seasons'])}")
-    print(f"manifest={args.data_dir / 'raw' / 'source_manifest.json'}")
-    return 0
-
-
-def _epl_prepare(args: argparse.Namespace) -> int:
-    result = prepare_epl(
-        args.seasons,
-        args.data_dir,
-        output_path=args.output,
-        quality_report_path=args.quality_report,
-        processed_manifest_path=args.processed_manifest,
-    )
-    print("MatchQuant M2 EPL prepare complete")
-    print(f"seasons={','.join(result['seasons'])} rows={result['rows']} status={result['status']}")
-    print(f"canonical={result['output_path']}")
-    print(f"quality_report={result['quality_report_path']}")
-    print(f"processed_manifest={result['processed_manifest_path']}")
-    return 0
-
-
-def _epl_sync(args: argparse.Namespace) -> int:
-    result = sync_epl(
-        seasons=args.seasons,
-        data_dir=args.data_dir,
-        timeout=args.timeout,
-        apply=args.apply,
-        in_progress_season=args.in_progress_season,
-        staging_dir=args.staging_dir,
-        baseline_path=args.baseline,
-        processed_manifest_path=args.processed_manifest,
-        current_pointer_path=args.current_pointer,
-    )
-    mode = "apply" if result["apply_requested"] else "dry-run"
-    counts = result["diff"]
-    print(f"MatchQuant M2.1 EPL sync {result['status']}")
-    print(f"source={result.get('source') or 'unknown'} competition={result.get('competition') or 'unknown'} division={result.get('division') or 'unknown'}")
-    if result.get("source_label"):
-        print(f"source_label={result['source_label']}")
-    if result.get("source_urls"):
-        print(f"source_urls={','.join(result['source_urls'])}")
-    policy = result["in_progress_season"] or "none"
-    print(f"mode={mode} seasons={','.join(result['requested_seasons'])} baseline={result['baseline']['version']} in_progress_season={policy}")
-    print(f"staging={result['staging_dir']}")
-    print(f"added={counts['added']} unchanged={counts['unchanged']} revised={counts['revised']} missing={counts['missing_from_candidate']} skipped_unfinished={result['skipped_unfinished']}")
-    print(f"quality_report={result['quality_report_path']}")
-    print(f"diff_report={result['diff_report_path']}")
-    if result["status"] == "blocked":
-        print(f"apply_blocked={','.join(result['apply_blockers'])} manual_review_required=true")
-        return 2
-    print(f"processed_manifest={result['processed_manifest_path']}")
-    if result["status"] == "applied":
-        print(f"version={result['version_id']} pointer={result['pointer_path']}")
-    return 0
-
-
-def _epl_local_stage(args: argparse.Namespace) -> int:
-    result = stage_local_epl_source(
-        args.source_csv,
-        args.season,
-        args.data_dir,
-        source_url=args.source_url,
-        source_label=args.source_label,
-        upstream_retrieved_at=args.upstream_retrieved_at,
-    )
-    manifest = result["manifest"]
-    print(f"MatchQuant M7 local staging {result['status']}")
-    print(f"snapshot={result['snapshot_dir']}")
-    print(f"raw={result['raw_path']}")
-    print(f"raw_sha256={result['raw_sha256']}")
-    print(f"manifest={result['manifest_path']}")
-    print(f"validation={manifest['validation_status']} next=epl-sync --staging-dir")
-    return 0
-
-
-def _epl_fixtures_prepare(args: argparse.Namespace) -> int:
-    result = prepare_epl_fixtures(
-        args.source_csv,
-        args.season,
-        args.data_root,
-        source_url=args.source_url,
-        source_label=args.source_label,
-        baseline_fixtures=args.baseline_fixtures,
-    )
-    counts = result["counts"]
-    print(f"MatchQuant M5 EPL fixture snapshot {result['status']}")
-    print(f"snapshot={result['snapshot_dir']}")
-    print(f"source_sha256={result['source_sha256']}")
-    print(
-        "pending={pending_rows} completed={completed_rows} partial={partial_score_rows} invalid={invalid_rows}".format(
-            **counts
-        )
-    )
-    if result["fixture_path"]:
-        print(f"fixtures={result['fixture_path']}")
-    print(f"manifest={result['manifest_path']}")
-    print(f"quality_report={result['quality_report_path']}")
-    if result["diff_report_path"]:
-        print(f"diff_report={result['diff_report_path']}")
-    return 2 if result["status"] == "no_pending_fixtures" else 0
-
-
-def _settle(args: argparse.Namespace) -> int:
-    result = settle_forecast_run(args.forecast_run, args.results, output_root=args.output_root)
-    print(f"MatchQuant M6 settlement {result['status']}")
-    print(f"settled={result['counts']['settled']} total={result['counts']['total_predictions']} coverage={result['metrics']['coverage']}")
-    print(f"settlement={result['settlement_path']}")
-    print(f"metrics={result['metrics_path']}")
-    print(f"settlement_report={result['settlement_report_path']}")
-    print(f"run_config={result['run_config_path']}")
-    return 2 if result["status"] == "needs_review" else 0
-
-
-def _release_verify(args: argparse.Namespace) -> int:
-    result = verify_release(
-        args.forecast_run,
-        args.history,
-        args.history_manifest,
-        args.fixture_manifest,
-        output_root=args.output_root,
-    )
-    print(f"MatchQuant M8 release verification {result['status']}")
-    print(f"release_dir={result['run_dir']}")
-    print(f"release_manifest={result['release_manifest_path']}")
-    print(f"release_report={result['release_report_path']}")
-    print(f"forecast_predictions={result['forecast_predictions_path']}")
-    counts = {status: sum(item["status"] == status for item in result["checks"]) for status in ("passed", "needs_review", "blocked")}
-    print(f"checks_passed={counts['passed']} needs_review={counts['needs_review']} blocked={counts['blocked']}")
-    return 0 if result["status"] == "ready" else 2
-
-
-def _forecast_session(args: argparse.Namespace) -> int:
-    result = run_forecast_session(
-        args.history,
-        args.history_manifest,
-        args.fixture_source,
-        args.season,
-        args.as_of,
-        selection_run_config_path=args.selection_run_config,
-        model_name=args.model,
-        model_config_path=args.model_config,
-        season_mode=args.season_mode,
-        source_url=args.source_url,
-        source_label=args.source_label,
-        fixture_data_root=args.fixture_data_root,
-        output_root=args.output_root,
-    )
-    print(f"MatchQuant M9 forecast session {result['status']}")
-    print(f"session_dir={result['session_dir']}")
-    print(f"release_report={result['release_report_path'] or 'not_run'}")
-    return 0 if result["status"] == "ready" else 2
-
-
-def _postmatch_session(args: argparse.Namespace) -> int:
-    result = run_postmatch_session(
-        args.session_manifest,
-        args.season,
-        results_source_csv=args.results_source,
-        staging_dir=args.staging_dir,
-        apply=args.apply,
-        in_progress_season=args.in_progress_season,
-        source_url=args.source_url,
-        source_label=args.source_label,
-        upstream_retrieved_at=args.upstream_retrieved_at,
-        data_root=args.data_root,
-        output_root=args.output_root,
-        current_pointer_path=args.current_pointer,
-    )
-    print(f"MatchQuant M10 post-match session {result['status']}")
-    print(f"session_dir={result['session_dir']}")
-    print(f"staging={result['staging_dir'] or 'not_run'}")
-    print(f"sync={result['stages']['sync']['status']}")
-    print(f"settlement={result['stages']['settlement']['status']}")
-    print(f"report={result['postmatch_report_path']}")
-    return 0 if result["status"] in {"complete", "partial"} else 2
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = _parser()
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "snapshot-session" and args.bundle_manifest is not None and args.issue_evidence is not None:
-        parser.error(
-            "--issue-evidence cannot be combined with --bundle-manifest; bundle sessions read "
-            "the bundled issue record itself"
-        )
+    if not args.command:
+        parser.print_help()
+        return 1
+
     try:
+        if args.command == "rich-prepare":
+            df = build_rich_epl_dataset(args.data_root, output_csv=args.output, seasons=args.seasons)
+            print(
+                f"Rich dataset built: rows={len(df)} cols={len(df.columns)} "
+                f"seasons={df['season'].min()}..{df['season'].max()} output={args.output}"
+            )
+            return 0
+
+        if args.command == "factor-lab":
+            rich_df = _load_or_build_rich(args.input, args.data_root)
+            panel, _ = build_historical_factor_panel(rich_df)
+            lab = run_factor_lab(panel)
+            out_dir = Path(args.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            write_json(lab, out_dir / "factor_lab_metrics.json")
+            report_path = out_dir / "factor_lab_report.md"
+            report_path.write_text(render_factor_lab_report(lab), encoding="utf-8")
+            print(
+                f"Factor Lab complete: analyzed={lab['n_matches_analyzed']} matches | "
+                f"selected_fundamental={len(lab['selected_fundamental_factors'])} | "
+                f"report={report_path}"
+            )
+            return 0
+
+        if args.command == "quant-research":
+            rich_df = _load_or_build_rich(args.input, args.data_root)
+            bundle = run_quant_research_pipeline(rich_df, output_dir=args.output_dir)
+            test_eval = bundle["test_evaluation"]["overall"]
+            elo_ll = test_eval["1_baseline_elo"]["log_loss"]
+            ta_ll = test_eval["4_track_a_fundamental_ensemble"]["log_loss"]
+            tmo_ll = test_eval.get("5_track_m_open_tradable", {}).get("log_loss", float("nan"))
+            tb_ll = test_eval["6_track_b_market_augmented"]["log_loss"]
+            wf_pooled = bundle["walk_forward_evaluation"]["pooled"]
+            wf_elo = wf_pooled["elo"]["log_loss"]
+            wf_ta = wf_pooled["track_a"]["log_loss"]
+            wf_tmo = wf_pooled.get("track_m_open", {}).get("log_loss", float("nan"))
+            wf_tb = wf_pooled["track_b"]["log_loss"]
+            print(
+                f"Quant Research complete: matches={bundle['summary']['total_matches']} | "
+                f"Holdout LogLoss: Elo={elo_ll:.5f}, TrackA={ta_ll:.5f} ({ta_ll - elo_ll:+.5f}), "
+                f"TrackM-Open={tmo_ll:.5f} ({tmo_ll - elo_ll:+.5f}), "
+                f"TrackB={tb_ll:.5f} ({tb_ll - elo_ll:+.5f}) | "
+                f"Walk-Forward (1900m) LogLoss: Elo={wf_elo:.5f}, TrackA={wf_ta:.5f} ({wf_ta - wf_elo:+.5f}), "
+                f"TrackM-Open={wf_tmo:.5f} ({wf_tmo - wf_elo:+.5f}), "
+                f"TrackB={wf_tb:.5f} ({wf_tb - wf_elo:+.5f}) | "
+                f"output_dir={args.output_dir}"
+            )
+            return 0
+
+        if args.command == "matchday-radar":
+            rich_df = _load_or_build_rich(args.input, args.data_root)
+            panel, _ = build_historical_factor_panel(rich_df)
+            n_target = max(1, int(args.top_n))
+            target_df = panel.tail(n_target).copy()
+
+            all_seasons = sorted(panel["season"].unique())
+            target_season = str(target_df["season"].iloc[-1])
+            k_idx = all_seasons.index(target_season) if target_season in all_seasons else (len(all_seasons) - 1)
+
+            if k_idx >= 2:
+                train_seasons = all_seasons[: k_idx - 1]
+                val_season = all_seasons[k_idx - 1]
+            else:
+                train_seasons = all_seasons[:k_idx]
+                val_season = all_seasons[k_idx]
+
+            discovery_seasons = all_seasons[:k_idx] if k_idx > 0 else all_seasons
+            lab = run_factor_lab(panel, discovery_seasons=discovery_seasons)
+            dyn_fund = list(lab["selected_fundamental_factors"])
+            dyn_m_open = dyn_fund + [c for c in ["mkt_open_prob_edge", "mkt_ah_supremacy"] if c in panel.columns]
+
+            train_df = panel[panel["season"].isin(set(train_seasons))].copy()
+            val_df = panel[panel["season"] == val_season].copy()
+
+            sys_a, _ = fit_and_select_factor_system(train_df, val_df, dyn_fund, track="fundamental")
+            sys_m_open, _ = fit_and_select_factor_system(train_df, val_df, dyn_m_open, track="tradable_m_open")
+
+            val_ta_p = sys_a.predict_proba(val_df)
+            val_open_cols = ["mkt_open_prob_home", "mkt_open_prob_draw", "mkt_open_prob_away"]
+            val_open_p = _clip_probs(val_df[val_open_cols].to_numpy(dtype=float))
+            ortho_coeffs = {}
+            for c_idx, c_code in enumerate(["h", "d", "a"]):
+                v_raw = val_ta_p[:, c_idx] - val_open_p[:, c_idx]
+                v_open = val_open_p[:, c_idx]
+                mask = np.isfinite(v_raw) & np.isfinite(v_open)
+                slp, icpt = np.polyfit(v_open[mask], v_raw[mask], 1) if mask.sum() >= 20 else (0.0, 0.0)
+                ortho_coeffs[c_code] = (float(slp), float(icpt))
+
+            ta_p = sys_a.predict_proba(target_df)
+            tmo_p = sys_m_open.predict_proba(target_df)
+            _, lam_h, lam_a, p_o25 = sys_a.dixon_coles_model.predict_proba_and_goals(target_df)
+            target_open_p = _clip_probs(target_df[val_open_cols].to_numpy(dtype=float))
+
+            print("\n" + "=" * 140)
+            print("  MatchQuant v2.0 赛前实盘量化雷达仪（Matchday Quantitative Decision Radar）")
+            print("=" * 140)
+            header = f"{'对阵双方 (开球日期)':<35} | {'Elo 胜率 (H/D/A)':<18} | {'Track A 基本面':<18} | {'Track M-Open':<18} | {'期望进球 (xG)':<15} | {'大球概率':<8} | {'去偏最优 Alpha':<16} | 核心非 Elo 驱动因子 (Top 3)"
+            print(header)
+            print("-" * 155)
+
+            for idx, (_, row) in enumerate(target_df.iterrows()):
+                match_label = f"{row['home_team']} vs {row['away_team']} ({str(row['date'])[:10]})"
+                elo_str = f"{row['elo_prob_h']*100:.1f}/{row['elo_prob_d']*100:.1f}/{row['elo_prob_a']*100:.1f}%"
+                ta_str = f"{ta_p[idx, 0]*100:.1f}/{ta_p[idx, 1]*100:.1f}/{ta_p[idx, 2]*100:.1f}%"
+                tmo_str = f"{tmo_p[idx, 0]*100:.1f}/{tmo_p[idx, 1]*100:.1f}/{tmo_p[idx, 2]*100:.1f}%"
+                xg_str = f"{lam_h[idx]:.2f} - {lam_a[idx]:.2f}"
+                o25_str = f"{p_o25[idx]*100:.1f}%"
+
+                best_edge_dir = "None"
+                best_edge_val = -999.0
+                for c_idx, c_code in enumerate(["h", "d", "a"]):
+                    raw_e = ta_p[idx, c_idx] - target_open_p[idx, c_idx]
+                    slp, icpt = ortho_coeffs[c_code]
+                    ortho_e = raw_e - (icpt + slp * target_open_p[idx, c_idx])
+                    if ortho_e > best_edge_val:
+                        best_edge_val = ortho_e
+                        best_edge_dir = c_code.upper()
+                if best_edge_val >= 0.015:
+                    edge_str = f"{best_edge_dir} ({best_edge_val*100:+.1f}%)"
+                else:
+                    edge_str = f"Neutral ({best_edge_val*100:+.1f}%)"
+
+                attr = sys_a.ordered_model.explain_row(row)
+                top_drivers = [
+                    d for d in attr["top_factor_contributions"]
+                    if d["factor"] != "elo_diff" and abs(d["marginal_prob_h_pct"]) >= 0.10
+                ][:3]
+                drivers_str = " ; ".join(f"{d['factor']}({d['marginal_prob_h_pct']:+.1f}%)" for d in top_drivers) or "基本面与Elo一致"
+
+                print(f"{match_label:<35} | {elo_str:<18} | {ta_str:<18} | {tmo_str:<18} | {xg_str:<15} | {o25_str:<8} | {edge_str:<16} | {drivers_str}")
+
+            print("=" * 155 + "\n")
+            return 0
+
         if args.command == "run":
-            raise SystemExit(_run(args))
-        if args.command == "select":
-            raise SystemExit(_select(args))
-        if args.command == "forecast":
-            raise SystemExit(_forecast(args))
-        if args.command == "engine-snapshot-build":
-            raise SystemExit(_engine_snapshot_build(args))
-        if args.command == "engine-snapshot-predict":
-            raise SystemExit(_engine_snapshot_predict(args))
-        if args.command == "result-factor-build":
-            raise SystemExit(_result_factor_build(args))
-        if args.command == "result-factor-query":
-            raise SystemExit(_result_factor_query(args))
-        if args.command == "engine-snapshot-status":
-            raise SystemExit(_engine_snapshot_status(args))
-        if args.command == "snapshot-session":
-            raise SystemExit(_snapshot_session(args))
-        if args.command == "snapshot-run-verify":
-            raise SystemExit(_snapshot_run_verify(args))
-        if args.command == "runtime-bundle-build":
-            raise SystemExit(_runtime_bundle_build(args))
-        if args.command == "runtime-bundle-verify":
-            raise SystemExit(_runtime_bundle_verify(args))
-        if args.command == "demo-export":
-            raise SystemExit(_demo_export(args))
+            cfg: dict[str, Any] = {}
+            if args.config:
+                cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+            input_path = args.input or cfg.get("input")
+            test_start = args.test_start or cfg.get("test_start")
+            test_end = args.test_end or cfg.get("test_end")
+            model_arg = args.model or cfg.get("model", "all")
+            season_mode = args.season_mode or cfg.get("season_mode", "carry")
+            output_dir = Path(args.output_dir or cfg.get("output_dir", "outputs"))
+            if not input_path or not test_start:
+                raise ValueError("Both --input and --test-start are required")
+            matches = load_matches(input_path)
+            model_names = MODEL_NAMES if model_arg == "all" else (model_arg,)
+            runs = run_models(
+                matches,
+                model_names=model_names,
+                test_start=test_start,
+                test_end=test_end,
+                season_mode=season_mode,
+                model_configs=cfg.get("model_configs"),
+            )
+            predictions = pd.concat([r.predictions for r in runs.values()], ignore_index=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            write_predictions(predictions, output_dir / "predictions.csv")
+            write_json(
+                {
+                    "input_path": str(Path(input_path).resolve()),
+                    "input_sha256": file_sha256(input_path),
+                    "models": {
+                        name: r.metrics
+                        for name, r in runs.items()
+                    },
+                },
+                output_dir / "metrics.json",
+            )
+            print(f"Baseline backtest complete: output={output_dir}")
+            return 0
+
         if args.command == "epl-download":
-            raise SystemExit(_epl_download(args))
+            download_epl(args.seasons, args.data_dir)
+            return 0
+
         if args.command == "epl-prepare":
-            raise SystemExit(_epl_prepare(args))
-        if args.command == "epl-sync":
-            raise SystemExit(_epl_sync(args))
-        if args.command == "epl-local-stage":
-            raise SystemExit(_epl_local_stage(args))
-        if args.command == "epl-fixtures-prepare":
-            raise SystemExit(_epl_fixtures_prepare(args))
-        if args.command == "settle":
-            raise SystemExit(_settle(args))
-        if args.command == "release-verify":
-            raise SystemExit(_release_verify(args))
-        if args.command == "forecast-session":
-            raise SystemExit(_forecast_session(args))
-        if args.command == "postmatch-session":
-            raise SystemExit(_postmatch_session(args))
-        raise ValueError(f"unknown command: {args.command}")
-    except (DataValidationError, FileNotFoundError, OSError, TypeError, ValueError) as exc:
-        if args.command in {"result-factor-build", "result-factor-query"}:
-            print(f"matchquant {args.command}: {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-        parser.error(str(exc))
+            prepare_epl(args.seasons, args.data_dir, args.output)
+            return 0
+
+        if args.command == "select":
+            from datetime import datetime, timezone
+
+            matches = load_matches(args.input)
+            candidates, _ = load_candidates(args.candidate_config)
+            folds = parse_validation_folds(args.validation_folds)
+            sel = run_nested_selection(
+                matches,
+                candidates,
+                folds,
+                final_test_start=args.final_test_start,
+                final_test_end=args.final_test_end,
+            )
+            if args.output_dir:
+                out_dir = Path(args.output_dir)
+            else:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                out_dir = Path(args.output_root) / f"m3_select_{stamp}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            write_json(
+                {
+                    "schema_version": sel["schema_version"],
+                    "validation_folds": sel["validation_folds"],
+                    "final_test": sel["final_test"],
+                    "selection_rule": sel["selection_rule"],
+                    "data_provenance": {"status": "missing_manifest", "input_sha256": file_sha256(args.input)},
+                    "final_test_metrics": sel["final_metrics"],
+                },
+                out_dir / "run_config.json",
+            )
+            write_json(
+                {
+                    "candidates": sel["candidates"],
+                    "ranking": sel["ranking"],
+                    "selected_candidate": sel["selected_candidate"],
+                },
+                out_dir / "validation_metrics.json",
+            )
+            write_json(sel["final_metrics"], out_dir / "final_metrics.json")
+            write_predictions(sel["final_run"].predictions, out_dir / "predictions.csv")
+            sel["calibration_table"].to_csv(out_dir / "calibration_reliability.csv", index=False)
+            print(f"Selection complete: selected={sel['selected_candidate']['candidate_name']} output={out_dir}")
+            return 0
+
+    except (DataValidationError, FileNotFoundError, ValueError, OSError) as exc:
+        print(f"matchquant error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
