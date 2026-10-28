@@ -1,751 +1,382 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#000000">
-  <meta name="description" content="MatchQuant 用 11 个英超赛季、4,180 场历史比赛估算赛果概率，并展示五季测试、比赛因素和资金模拟。">
-  <title>MatchQuant V1｜看看模型如何分析英超比赛</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      color-scheme: dark;
-      --black: #000;
-      --ink: #08090c;
-      --panel: #0b0d11;
-      --panel-2: #101319;
-      --white: #f7f7f7;
-      --copy: #a4a7ad;
-      --dim: #686e78;
-      --line: rgba(255,255,255,.09);
-      --coral: #ff8a73;
-      --crimson: #f0605a;
-      --mint: #8de0ba;
-      --blue: #8a9cff;
-      font-family: "Inter Vexor", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-      font-synthesis: none;
-      text-rendering: optimizeLegibility;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-    @font-face {
-      font-family: "Inter Vexor";
-      src: local("Inter Variable"), local("Inter");
-      font-style: normal;
-      font-weight: 100 900;
-      font-display: swap;
-    }
-    *,*::before,*::after{box-sizing:border-box}
-    html{min-width:320px;background:var(--black);scroll-behavior:smooth}
-    body{margin:0;min-width:320px;background:var(--black);color:var(--white)}
-    button,a,select{font:inherit;-webkit-tap-highlight-color:transparent}
-    button{color:inherit}
-    a{color:inherit}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums lining-nums}
-    .site-shell{container-type:inline-size;width:100%;min-height:100dvh;overflow:hidden;background:#000}
-    .page{--u:calc(100cqw / 1440);--v:min(calc(100cqw / 1240),calc(100dvh / 720));width:min(100%,1600px);margin-inline:auto;padding:0 2.083333cqw 54px}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000">
+<meta name="description" content="MatchQuant v2.0：以英超多因子定价、Power 幂次去水与市场背离分析，呈现可解释的足球量化研究。">
+<title>MatchQuant v2.0 — Football Asset Pricing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;--black:#000;--panel:rgba(10,11,15,.84);--white:#f7f7f8;--copy:#a7a8b0;--dim:#72747d;--line:rgba(255,255,255,.12);--coral:#ff8a73;--crimson:#f0605a;--amber:#ffc47a;--blue:#80bfff;--mint:#8cdeb6;font-family:"Inter Vexor",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+@font-face{font-family:"Inter Vexor";src:local("Inter Variable"),local("Inter");font-style:normal;font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html{min-width:320px;background:#000;scroll-behavior:smooth}
+body{margin:0;min-width:320px;background:#000;color:var(--white)}
+button,input,a{font:inherit;-webkit-tap-highlight-color:transparent}
+button{color:inherit}a{color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--coral);outline-offset:3px}
+::selection{color:#120807;background:#ff9a85}
+.mono,.number,.prob-value,.price-value,.edge-value{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums lining-nums;letter-spacing:-.035em}
+.site-shell{container-type:inline-size;width:100%;min-height:100dvh;overflow:hidden;background:#000}
+.page{--u:calc(100cqw / 1440);--v:min(calc(100cqw / 1240),calc(100dvh / 720));width:min(100%,1600px);margin:auto;padding:0 clamp(19px,2.0833cqw,36px) 42px}
+.topbar{position:relative;z-index:10;height:clamp(66px,calc(76 * var(--u)),82px);display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid rgba(255,255,255,.095)}
+.brand{display:inline-flex;align-items:center;gap:11px;text-decoration:none;white-space:nowrap}
+.brand-mark{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(255,138,115,.45);border-radius:11px;background:radial-gradient(circle at 50% 0%,rgba(255,138,115,.15),transparent 68%);color:#ffc0b4;font:700 11px/1 ui-monospace,monospace;letter-spacing:-.08em;box-shadow:0 0 22px rgba(240,96,90,.08),inset 0 1px rgba(255,255,255,.06)}
+.brand-name{display:block;font-size:11px;line-height:1;font-weight:760;letter-spacing:.16em}.brand-sub{display:block;margin-top:5px;color:#777982;font:8px/1 ui-monospace,monospace;letter-spacing:.16em}
+.nav-links{display:flex;align-items:center;gap:clamp(15px,2.05cqw,30px);color:#9698a0;font-size:10px}.nav-links a{text-decoration:none;transition:color .2s}.nav-links a:hover{color:#fff}
+.nav-github{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgba(255,255,255,.035);color:#f2f2f4!important}.nav-github::after{content:"↗";color:var(--coral);font-size:13px}
+.menu-toggle{display:none;width:40px;height:40px;border:1px solid var(--line);border-radius:50%;background:#090a0d;cursor:pointer}.menu-toggle span,.menu-toggle::before,.menu-toggle::after{content:"";display:block;width:14px;height:1px;margin:3px auto;background:#eee}
 
-    .topbar{height:78px;display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid rgba(255,255,255,.075)}
-    .brand{display:inline-flex;align-items:center;gap:12px;text-decoration:none;white-space:nowrap}
-    .brand-mark{width:32px;height:32px;display:grid;place-items:center;border:1px solid rgba(255,138,115,.42);border-radius:10px;color:var(--coral);font:700 12px/1 ui-monospace,monospace;box-shadow:inset 0 0 18px rgba(240,96,90,.09),0 0 20px rgba(240,96,90,.06)}
-    .brand-name{font-size:11px;font-weight:700;letter-spacing:.13em}
-    .brand-sub{display:block;margin-top:4px;color:var(--dim);font:9px/1 ui-monospace,monospace;letter-spacing:.15em}
-    .top-links{display:flex;align-items:center;gap:clamp(16px,2.2cqw,34px);color:#9da1aa;font-size:11px;letter-spacing:.025em}
-    .top-links a{transition:color .2s ease;text-decoration:none}
-    .top-links a:hover{color:#fff}
-    .top-github{display:inline-flex;align-items:center;gap:9px;padding:10px 14px;border:1px solid rgba(255,255,255,.15);border-radius:999px;color:#f2f2f2!important;background:rgba(255,255,255,.035)}
-    .top-github::after{content:"↗";color:var(--coral);font-size:14px}
+.hero{padding-top:17px}.hero-card{position:relative;isolation:isolate;display:grid;place-items:center;height:min(calc(340 * var(--u)),calc(340 * var(--v)));min-height:285px;overflow:hidden;border-radius:20px;background:#050405;box-shadow:0 25px 90px rgba(111,19,30,.13),inset 0 0 70px rgba(255,255,255,.012)}
+.hero-card::before{content:"";position:absolute;z-index:5;inset:0;padding:1px;border-radius:inherit;background:linear-gradient(112deg,rgba(244,118,104,.67),rgba(244,118,104,.29) 62%,rgba(240,96,90,.53));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;transform:scaleX(0);transform-origin:center;animation:frame-draw .82s cubic-bezier(.18,.78,.2,1) .08s forwards;pointer-events:none}
+.hero-plate,.hero-video,.hero-shade{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.hero-plate{z-index:0;object-fit:cover;object-position:right bottom;opacity:.97}.hero-video{z-index:1;object-fit:cover;object-position:right bottom;opacity:0;transition:opacity 1.15s ease}.hero-card.video-ready .hero-video{opacity:.8}
+.hero-shade{z-index:2;background:linear-gradient(90deg,rgba(0,0,0,.78),rgba(0,0,0,.57) 34%,rgba(0,0,0,.29) 70%,rgba(0,0,0,.21)),linear-gradient(180deg,rgba(0,0,0,.2),transparent 35%,rgba(0,0,0,.22))}
+.hero-content{position:relative;z-index:3;width:min(940px,91%);padding:24px 0;text-align:center}
+.eyebrow,.section-kicker,.panel-kicker{color:#f2aa9d;font:9px/1.35 ui-monospace,SFMono-Regular,monospace;letter-spacing:.16em;text-transform:uppercase}
+.eyebrow{display:inline-flex;align-items:center;gap:9px}.eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--coral);box-shadow:0 0 13px var(--coral)}
+h1{margin:14px 0 10px;color:#fff;font-size:clamp(28px,calc(34 * var(--u)),44px);line-height:1.1;font-weight:640;letter-spacing:-.055em;opacity:0;transform:translateY(15px);animation:rise .68s cubic-bezier(.2,.72,.22,1) .27s forwards}
+h1 em{color:#ffc0b3;font-style:normal}
+.hero-copy{max-width:730px;margin:0 auto;color:rgba(255,255,255,.77);font-size:clamp(12px,calc(14 * var(--u)),15px);line-height:1.65;opacity:0;animation:fade .7s ease .52s forwards}
+.hero-action-shell{width:min(460px,100%);min-height:46px;display:flex;align-items:center;gap:6px;margin:19px auto 0;padding:5px 6px 5px 17px;overflow:hidden;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:rgba(0,0,0,.68);color:#ececef;text-decoration:none;box-shadow:inset 0 1px rgba(255,255,255,.025);opacity:0;transform:scaleX(.84);animation:expand .66s cubic-bezier(.18,.78,.2,1) .78s forwards}
+.hero-action-context{min-width:0;flex:1;overflow:hidden;color:#bfc0c5;font-size:10px;text-align:left;text-overflow:ellipsis;white-space:nowrap}
+.hero-action-button{min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:0 14px;border-radius:999px;color:#1d100e;background:linear-gradient(110deg,#ff927d,#f0605a);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 15px rgba(240,96,90,.2);font-size:10px;font-weight:700;white-space:nowrap;transform:scale(.88);opacity:.7;animation:button-pop .38s cubic-bezier(.2,.75,.2,1.3) 1.18s forwards;transition:transform .2s,box-shadow .2s,filter .2s}
+.hero-action-shell:hover .hero-action-button{transform:translateY(-1px);filter:saturate(1.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.54),0 7px 21px rgba(240,96,90,.35)}.hero-action-button i{font-style:normal;font-size:13px}
+.hero-meta{margin-top:14px;color:rgba(240,240,242,.55);font:8px/1.3 ui-monospace,monospace;letter-spacing:.1em}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-top:13px}
+.metric{position:relative;min-height:100px;padding:17px 18px 14px;overflow:hidden;border:1px solid rgba(255,255,255,.095);border-radius:13px;background:linear-gradient(145deg,rgba(15,16,20,.94),rgba(5,6,8,.96));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.metric::after{content:"";position:absolute;right:-26px;top:-46px;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,rgba(240,96,90,.12),transparent 68%);pointer-events:none}
+.metric-label{color:#80818a;font:8px/1.35 ui-monospace,monospace;letter-spacing:.115em;text-transform:uppercase}
+.metric-value{position:relative;z-index:1;margin-top:7px;color:#fff;font-size:23px;line-height:1;font-weight:660;letter-spacing:-.055em}.metric-value .mono{color:#ffc0b3}
+.metric-copy{max-width:255px;margin-top:8px;color:#858690;font-size:9px;line-height:1.5}
 
-    .hero{padding-top:28px}
-    .hero-card{position:relative;isolation:isolate;display:grid;place-items:center;min-height:min(340px,35.4167dvh);height:min(23.6111cqw,35.4167dvh);overflow:hidden;border-radius:20px;background:#080506;box-shadow:0 28px 90px rgba(90,15,24,.13)}
-    .hero-card::before{content:"";position:absolute;z-index:4;inset:0;padding:1px;border-radius:inherit;background:linear-gradient(112deg,rgba(244,118,104,.67),rgba(244,118,104,.29) 62%,rgba(240,96,90,.51));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;transform:scaleX(0);transform-origin:center;animation:frame-draw .8s cubic-bezier(.18,.78,.2,1) .08s forwards;pointer-events:none}
-    .hero-plate,.hero-video,.hero-shade{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-    .hero-plate{z-index:-3;object-fit:cover;object-position:right bottom;opacity:.98}
-    .hero-video{z-index:-2;object-fit:cover;object-position:right bottom;opacity:0;transition:opacity 1.15s ease}
-    .hero-card.video-ready .hero-video{opacity:.8}
-    .hero-shade{z-index:-1;background:linear-gradient(90deg,rgba(0,0,0,.74) 0%,rgba(0,0,0,.49) 37%,rgba(0,0,0,.08) 85%),linear-gradient(180deg,rgba(0,0,0,.18),transparent 35%,rgba(0,0,0,.18))}
-    .hero-content{position:relative;z-index:2;width:min(900px,90%);padding:24px 0;text-align:center}
-    .eyebrow{display:inline-flex;align-items:center;gap:9px;color:#f5b0a2;font:10px/1.3 ui-monospace,SFMono-Regular,monospace;letter-spacing:.17em;text-transform:uppercase}
-    .eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--coral);box-shadow:0 0 12px var(--coral)}
-    h1{margin:17px 0 12px;font-size:clamp(32px,3.15cqw,46px);line-height:1.12;font-weight:630;letter-spacing:-.055em;opacity:0;transform:translateY(15px);animation:rise .68s cubic-bezier(.2,.72,.22,1) .27s forwards}
-    h1 em{color:#ffc0b3;font-style:normal}
-    .hero-copy{max-width:740px;margin:0 auto;color:rgba(255,255,255,.78);font-size:clamp(13px,1.04cqw,15px);line-height:1.72;letter-spacing:-.01em;opacity:0;animation:fade .7s ease .52s forwards}
-    .hero-actions{display:flex;justify-content:center;align-items:center;gap:11px;margin-top:22px;opacity:0;transform:scaleX(.84);animation:expand .66s cubic-bezier(.18,.78,.2,1) .78s forwards}
-    .button{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:42px;padding:0 18px;border:1px solid transparent;border-radius:999px;text-decoration:none;font-size:11px;font-weight:650;letter-spacing:.01em;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease,background .2s ease}
-    .button-primary{color:#17100f;background:linear-gradient(110deg,var(--coral),var(--crimson));box-shadow:inset 0 1px 0 rgba(255,255,255,.43),0 5px 18px rgba(240,96,90,.21)}
-    .button-primary:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 8px 24px rgba(240,96,90,.34)}
-    .button-quiet{border-color:rgba(255,255,255,.19);background:rgba(0,0,0,.38);color:#fff}
-    .button-quiet:hover{border-color:rgba(255,138,115,.55);background:rgba(0,0,0,.56)}
-    .button-arrow{color:inherit;font-size:14px}
+.section{padding-top:clamp(54px,6.4cqw,86px);scroll-margin-top:28px}.section-head{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:21px}.section-head-main{max-width:740px}
+.section-kicker{display:flex;align-items:center;gap:9px;color:#e99a8d}.section-kicker b{color:#777982;font-weight:500}
+.section-title{margin:9px 0 0;color:#f7f7f8;font-size:clamp(23px,2.5cqw,34px);line-height:1.1;font-weight:610;letter-spacing:-.05em}
+.section-copy{max-width:580px;margin:9px 0 0;color:#999aa3;font-size:11px;line-height:1.65}.section-aside{color:#72747d;font:8px/1.4 ui-monospace,monospace;letter-spacing:.08em;text-align:right;white-space:nowrap}
+.glass{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:var(--panel);box-shadow:inset 0 1px rgba(255,255,255,.025),0 18px 56px rgba(0,0,0,.22);backdrop-filter:blur(14px)}
+.radar-shell{padding:clamp(15px,1.6cqw,23px)}.radar-topline{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:15px;border-bottom:1px solid rgba(255,255,255,.08)}
+.radar-ident{color:#c4c5ca;font:8px/1.4 ui-monospace,monospace;letter-spacing:.12em}.live-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid rgba(255,138,115,.22);border-radius:999px;background:rgba(240,96,90,.06);color:#f1a89a;font:7px/1 ui-monospace,monospace;letter-spacing:.09em;white-space:nowrap}.live-pill::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--coral);box-shadow:0 0 10px var(--coral)}
+.radar-grid{display:grid;grid-template-columns:minmax(0,1.22fr) minmax(315px,.78fr);gap:13px;margin-top:13px}
+.subpanel{min-width:0;border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(2,3,5,.64)}
+.probability-panel{padding:17px 18px 13px}.fixture-line{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:2px 0 15px}
+.fixture-teams{display:flex;align-items:center;gap:11px;min-width:0}.team-badge{width:36px;height:36px;display:grid;place-items:center;flex:0 0 auto;border:1px solid rgba(255,255,255,.13);border-radius:50%;background:#101116;font:700 9px/1 ui-monospace,monospace}
+.team-badge.chelsea{color:#92c3ff;border-color:rgba(65,143,245,.3);box-shadow:inset 0 0 14px rgba(59,130,246,.13)}.team-badge.united{color:#ff958d;border-color:rgba(239,68,68,.28);box-shadow:inset 0 0 14px rgba(239,68,68,.12)}
+.team-name{color:#f6f6f7;font-size:14px;font-weight:630;letter-spacing:-.025em;white-space:nowrap}.fixture-vs{color:#6d6f78;font:8px/1 ui-monospace,monospace;letter-spacing:.1em}.fixture-context{display:flex;flex-direction:column;gap:5px;align-items:end;color:#a5a6ad;font:8px/1.3 ui-monospace,monospace;text-align:right}.fixture-context span:last-child{color:#686a73}
+.chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:14px;margin:5px 0 7px}.chart-title{color:#e5e5e8;font-size:10px;font-weight:590}.chart-unit{color:#696b74;font:7px/1.3 ui-monospace,monospace;letter-spacing:.08em}
+.model-legend{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin:9px 0 2px;color:#92939b;font-size:8px}.model-legend span,.timeline-legend span{display:inline-flex;align-items:center;gap:6px}
+.legend-dot{width:6px;height:6px;display:inline-block;border-radius:50%;background:#999}.legend-track{background:var(--coral)}.legend-market{background:var(--amber)}.legend-elo{background:var(--blue)}
+.probability-chart-wrap{width:100%;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#333 transparent}#probability-chart{display:block;width:100%;min-width:510px;height:auto;overflow:visible}
+.svg-label{fill:#7c7e87;font:9px ui-monospace,monospace}.svg-small{fill:#73757e;font:8px ui-monospace,monospace}.svg-value{fill:#efeff1;font:8px ui-monospace,monospace}.svg-grid{stroke:rgba(255,255,255,.075);stroke-width:1}.svg-baseline{stroke:rgba(255,255,255,.18);stroke-width:1}
+.chart-note{display:flex;justify-content:space-between;gap:15px;margin-top:4px;padding-top:11px;border-top:1px solid rgba(255,255,255,.07);color:#777982;font-size:8px;line-height:1.5}.chart-note strong{color:#c4c5ca;font-weight:550}
+.side-stack{display:grid;grid-template-rows:auto 1fr;gap:13px}
+.divergence-card{position:relative;overflow:hidden;padding:17px 18px 16px;border:1px solid rgba(255,188,114,.39);border-radius:13px;background:radial-gradient(ellipse at 94% 0%,rgba(240,96,90,.16),transparent 47%),linear-gradient(135deg,rgba(35,24,18,.82),rgba(9,9,10,.92));box-shadow:0 0 24px rgba(245,158,11,.075),inset 0 0 22px rgba(255,196,122,.025)}
+.divergence-card::after{content:"";position:absolute;right:-30px;bottom:-60px;width:170px;height:170px;border:1px solid rgba(255,196,122,.08);border-radius:50%;box-shadow:0 0 0 18px rgba(255,196,122,.018),0 0 0 37px rgba(255,196,122,.012);pointer-events:none}
+.warning-label{position:relative;z-index:1;display:inline-flex;align-items:center;gap:7px;color:#ffd29c;font:8px/1.3 ui-monospace,monospace;letter-spacing:.09em}.warning-label i{width:15px;height:15px;display:inline-grid;place-items:center;border:1px solid rgba(255,196,122,.45);border-radius:50%;font-style:normal;font-size:9px}
+.divergence-number{position:relative;z-index:1;margin-top:12px;color:#fff1e2;font-size:clamp(34px,calc(42 * var(--u)),49px);line-height:1;font-weight:620;letter-spacing:-.075em;text-shadow:0 0 22px rgba(255,159,91,.16)}.divergence-number small{color:#ffc47a;font-size:14px;letter-spacing:-.03em}
+.divergence-sub{position:relative;z-index:1;margin-top:7px;color:#b8a99b;font-size:8px;line-height:1.55}
+.divergence-pairs{position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:13px}.divergence-pair{padding:9px 10px;border:1px solid rgba(255,255,255,.075);border-radius:9px;background:rgba(0,0,0,.32)}.divergence-pair span{display:block;color:#8e8985;font-size:7px}.divergence-pair strong{display:block;margin-top:4px;color:#ffe1bc;font:12px/1.1 ui-monospace,monospace}
+.pricing-panel{padding:15px 17px 13px}.pricing-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px}.pricing-head strong{color:#dedee1;font-size:9px;font-weight:570}.pricing-head span{color:#73757d;font:7px/1 ui-monospace,monospace}
+.quote-table{width:100%;border-collapse:collapse}.quote-table th{padding:7px 5px;border-bottom:1px solid rgba(255,255,255,.08);color:#747680;font:7px/1 ui-monospace,monospace;font-weight:500;letter-spacing:.06em;text-align:right;white-space:nowrap}.quote-table th:first-child,.quote-table td:first-child{padding-left:0;text-align:left}
+.quote-table td{padding:8px 5px;border-bottom:1px solid rgba(255,255,255,.045);color:#c6c7cc;font:8px/1.2 ui-monospace,monospace;text-align:right;white-space:nowrap}.quote-table tbody tr:last-child td{border-bottom:0}
+.quote-outcome{color:#a7a8af!important;font-family:"Inter Vexor",Inter,sans-serif!important;font-size:8px!important}.price-value{color:#eaeaec!important}.edge-value.negative{color:#ff9b8e!important}.edge-value.positive{color:#a8dfbd!important}
+.market-note{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07)}.market-chip{padding:7px 9px;border:1px solid rgba(255,255,255,.09);border-radius:8px;background:rgba(255,255,255,.025);color:#8d8f98;font-size:7px;white-space:nowrap}.market-chip strong{margin-left:5px;color:#ededee;font:10px/1 ui-monospace,monospace}.market-chip.ah{border-color:rgba(255,138,115,.24);color:#d9a296}.market-chip.ah strong{color:#ffc0b3}
+.timeline-panel{margin-top:13px;padding:16px 18px 14px}.timeline-head{display:flex;justify-content:space-between;align-items:start;gap:18px}.timeline-title{color:#ebebed;font-size:10px;font-weight:570}.timeline-meta{margin-top:5px;color:#757780;font:7px/1.4 ui-monospace,monospace;letter-spacing:.03em}.timeline-legend{display:flex;justify-content:end;gap:11px;flex-wrap:wrap;color:#83858e;font-size:7px}
+.legend-home{background:var(--coral)}.legend-draw{background:var(--amber)}.legend-away{background:var(--blue)}.legend-fair{background:var(--mint)}
+.timeline-wrap{width:100%;margin-top:9px;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#333 transparent}#timeline-chart{display:block;width:100%;min-width:540px;height:auto}
+.timeline-caption{display:flex;justify-content:space-between;gap:16px;margin-top:4px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06);color:#73757d;font-size:7px;line-height:1.55}.timeline-caption strong{color:#b9bbc1;font-weight:540}
 
-    .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-top:16px}
-    .metric{position:relative;min-height:118px;padding:21px 21px 18px;overflow:hidden;border:1px solid rgba(255,255,255,.085);border-radius:14px;background:linear-gradient(145deg,rgba(15,17,22,.94),rgba(7,8,10,.94));box-shadow:inset 0 1px rgba(255,255,255,.025)}
-    .metric::after{content:"";position:absolute;right:-22px;top:-42px;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,rgba(240,96,90,.13),transparent 69%);pointer-events:none}
-    .metric-label{color:#818791;font:9px/1.2 ui-monospace,SFMono-Regular,monospace;letter-spacing:.12em;text-transform:uppercase}
-    .metric-value{margin-top:12px;color:#fff;font:600 clamp(24px,2.15cqw,31px)/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:-.065em}
-    .metric-value.coral{color:#ff9d89}
-    .metric-note{margin-top:9px;color:#8d929b;font-size:10px;line-height:1.45}
-    .metric-note strong{color:#d9dbe0;font-weight:550}
-
-    .section{margin-top:clamp(74px,8.1cqw,118px);scroll-margin-top:34px}
-    .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;margin-bottom:25px}
-    .section-kicker{color:#e98c7b;font:10px/1.25 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase}
-    h2{margin:10px 0 0;font-size:clamp(24px,2.25cqw,34px);line-height:1.15;font-weight:580;letter-spacing:-.05em}
-    .section-desc{max-width:500px;margin:0;color:var(--copy);font-size:12px;line-height:1.75}
-    .panel{border:1px solid rgba(255,255,255,.09);border-radius:16px;background:linear-gradient(145deg,rgba(13,15,19,.97),rgba(8,9,12,.97));box-shadow:inset 0 1px rgba(255,255,255,.025)}
-    .panel-label{color:#727984;font:9px/1.4 ui-monospace,monospace;letter-spacing:.13em;text-transform:uppercase}
-
-    .radar-layout{display:grid;grid-template-columns:minmax(0,1.48fr) minmax(300px,.82fr);gap:14px}
-    .radar-panel{padding:23px}
-    .radar-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding-bottom:18px;border-bottom:1px solid var(--line)}
-    .historic-tag{display:inline-flex;align-items:center;gap:8px;color:#b7bcc4;font:9px/1.3 ui-monospace,monospace;letter-spacing:.08em}
-    .historic-tag::before{content:"";width:6px;height:6px;border-radius:50%;background:#75849a}
-    .match-select{max-width:320px;width:52%;padding:9px 32px 9px 11px;border:1px solid rgba(255,255,255,.13);border-radius:8px;color:#eee;background:#101217;font-size:10px;outline:none}
-    .match-select:focus{border-color:rgba(255,138,115,.65);box-shadow:0 0 0 3px rgba(255,138,115,.1)}
-    .fixture-line{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:20px 0 16px}
-    .fixture-teams{min-width:0;display:flex;align-items:center;gap:12px;font-size:clamp(15px,1.38cqw,20px);font-weight:580;letter-spacing:-.035em}
-    .fixture-team{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .fixture-vs{color:#6f737c;font:10px/1 ui-monospace,monospace}
-    .score-pill{flex:0 0 auto;padding:7px 10px;border:1px solid rgba(255,255,255,.11);border-radius:8px;color:#e3e5e8;background:rgba(255,255,255,.035);font:12px/1 ui-monospace,monospace}
-    .score-pill span{margin-left:5px;color:#969ba4;font-size:9px}
-    .model-rows{display:grid;gap:12px}
-    .model-row{display:grid;grid-template-columns:112px minmax(0,1fr);gap:14px;align-items:center}
-    .model-name{color:#b8bdc5;font-size:10px;line-height:1.25}
-    .model-name small{display:block;margin-top:4px;color:#656c76;font:8px/1.2 ui-monospace,monospace;letter-spacing:.04em}
-    .prob-wrap{min-width:0}
-    .prob-bar{display:flex;width:100%;height:11px;overflow:hidden;border-radius:99px;background:#181b22;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
-    .prob-seg{height:100%;transition:width .38s ease}
-    .prob-home{background:linear-gradient(90deg,#f0605a,#ff9c83)}
-    .prob-draw{background:#747b87}
-    .prob-away{background:linear-gradient(90deg,#788cff,#a0adff)}
-    .prob-labels{display:flex;justify-content:space-between;gap:7px;margin-top:6px;color:#818792;font:9px/1.2 ui-monospace,monospace}
-    .prob-labels .home-val{color:#ff9a84}.prob-labels .away-val{color:#a0adff}
-    .radar-foot{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);color:#7e848e;font:9px/1.5 ui-monospace,monospace}
-    .legend-dot{display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;vertical-align:1px}
-    .radar-side{display:grid;grid-template-rows:auto 1fr;gap:14px}
-    .goals-panel,.drivers-panel{padding:21px}
-    .xg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:17px}
-    .xg-cell{padding:12px;border:1px solid rgba(255,255,255,.065);border-radius:10px;background:rgba(255,255,255,.018)}
-    .xg-cell span{display:block;color:#818791;font-size:9px}
-    .xg-cell strong{display:block;margin-top:8px;color:#f2f2f2;font:500 22px/1 ui-monospace,monospace;letter-spacing:-.045em}
-    .xg-cell.over strong{color:#f7a190}
-    .xg-cell.over{border-color:rgba(255,138,115,.16);background:rgba(240,96,90,.045)}
-    .driver-list{display:grid;gap:14px;margin-top:16px}
-    .driver-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center}
-    .driver-title{overflow:hidden;color:#c8cbd0;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
-    .driver-value{color:var(--mint);font:10px/1 ui-monospace,monospace}
-    .driver-track{grid-column:1/-1;height:4px;overflow:hidden;border-radius:99px;background:#1b2026}
-    .driver-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,#bb6a60,#ff9b82);box-shadow:0 0 10px rgba(255,138,115,.28)}
-    .empty-state{padding:26px 12px;color:var(--copy);font-size:11px;line-height:1.6;text-align:center}
-
-    .factor-shell{display:grid;grid-template-columns:minmax(260px,.74fr) minmax(0,1.4fr);gap:14px}
-    .factor-picker{padding:18px}
-    .factor-picker-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
-    .factor-count{color:#838994;font:9px/1 ui-monospace,monospace}
-    .factor-list{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-    .factor-choice{min-width:0;min-height:57px;padding:9px 10px;border:1px solid rgba(255,255,255,.075);border-radius:9px;background:rgba(255,255,255,.018);text-align:left;cursor:pointer;transition:background .2s,border-color .2s,transform .2s}
-    .factor-choice:hover{border-color:rgba(255,138,115,.32);transform:translateY(-1px)}
-    .factor-choice[aria-pressed="true"]{border-color:rgba(255,138,115,.55);background:linear-gradient(145deg,rgba(240,96,90,.12),rgba(240,96,90,.035));box-shadow:inset 0 0 20px rgba(240,96,90,.045)}
-    .factor-choice span{display:block;overflow:hidden;color:#d1d3d7;font-size:9px;font-weight:550;text-overflow:ellipsis;white-space:nowrap}
-    .factor-choice small{display:block;margin-top:6px;color:#737a84;font:8px/1 ui-monospace,monospace;letter-spacing:.035em}
-    .factor-main{padding:22px 24px}
-    .factor-topline{display:flex;justify-content:space-between;gap:22px;align-items:flex-start}
-    .factor-title{margin:7px 0 0;font-size:17px;font-weight:580;letter-spacing:-.03em}
-    .factor-code{margin-top:7px;color:#8d929b;font:9px/1.4 ui-monospace,monospace}
-    .factor-stat{flex:0 0 auto;text-align:right}
-    .factor-stat strong{display:block;color:#ffa08a;font:500 16px/1 ui-monospace,monospace}
-    .factor-stat small{display:block;margin-top:5px;color:#777e88;font-size:8px}
-    .factor-desc{max-width:650px;margin:12px 0 0;color:#959ba4;font-size:10px;line-height:1.6}
-    .quantile-chart{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;height:219px;margin-top:23px;padding:0 3px 28px;border-bottom:1px solid rgba(255,255,255,.13);background:repeating-linear-gradient(to bottom,transparent 0,transparent 42px,rgba(255,255,255,.055) 43px,transparent 44px)}
-    .quantile-col{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:9px;min-width:0}
-    .quantile-value{color:#c4c8ce;font:9px/1 ui-monospace,monospace}
-    .quantile-bar-area{display:flex;align-items:flex-end;justify-content:center;width:min(100%,54px);height:150px}
-    .quantile-bar{position:relative;width:100%;min-height:5px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#ff9c83,#e65d59 78%,#8d3a42);box-shadow:0 0 20px rgba(240,96,90,.12);transition:height .35s cubic-bezier(.2,.7,.2,1)}
-    .quantile-col:nth-child(1) .quantile-bar{opacity:.5}.quantile-col:nth-child(2) .quantile-bar{opacity:.66}.quantile-col:nth-child(3) .quantile-bar{opacity:.78}.quantile-col:nth-child(4) .quantile-bar{opacity:.9}
-    .quantile-label{position:absolute;bottom:-21px;color:#7f858f;font:9px/1 ui-monospace,monospace}
-    .chart-axis{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;color:#666d77;font:8px/1 ui-monospace,monospace;pointer-events:none}
-    .factor-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:18px;color:#7f858e;font-size:9px;line-height:1.45}
-    .factor-foot strong{color:#c4c8ce;font-weight:550}
-    .factor-foot .alpha-value{color:#f39b89;font-family:ui-monospace,monospace}
-    .factor-actions{display:flex;justify-content:flex-end;margin-top:16px}
-    .text-button{padding:0;border:0;color:#ff9c87;background:transparent;font-size:10px;text-decoration:underline;text-decoration-color:rgba(255,138,115,.4);text-underline-offset:4px;cursor:pointer}
-    .text-button:hover{color:#ffd0c7;text-decoration-color:#ff8a73}
-
-    .compare-panel{overflow:hidden}
-    .compare-head{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 21px;border-bottom:1px solid var(--line)}
-    .compare-legend{display:flex;align-items:center;gap:16px;flex-wrap:wrap;color:#9399a2;font-size:9px}
-    .compare-legend span{display:inline-flex;align-items:center;gap:6px}
-    .legend-swatch{width:7px;height:7px;border-radius:50%;background:#9aa0a9}.legend-track-a{background:#f08c7b}.legend-track-m{background:#9bcbb4}
-    .table-scroll{overflow-x:auto}
-    table{width:100%;border-collapse:collapse;min-width:790px}
-    thead th{padding:13px 14px;color:#7d848e;background:rgba(255,255,255,.018);font:8px/1.3 ui-monospace,monospace;letter-spacing:.09em;text-align:right;text-transform:uppercase;white-space:nowrap}
-    thead th:first-child,tbody td:first-child{text-align:left;padding-left:21px}
-    tbody td{padding:14px;color:#bcc1c9;border-top:1px solid rgba(255,255,255,.055);font:10px/1.3 ui-monospace,monospace;text-align:right;white-space:nowrap}
-    tbody tr:hover{background:rgba(255,255,255,.018)}
-    .season-cell{color:#f0f1f2;font-weight:600}
-    .model-cell{color:#c8cbd0}
-    .model-cell.track-a{color:#f2a08e}
-    .model-cell.track-m{color:#9ed6b9}
-    .delta-good{color:var(--mint)}
-    .compare-note{display:flex;justify-content:space-between;gap:20px;padding:13px 21px;color:#7f858e;font-size:9px;line-height:1.6}
-    .compare-note strong{color:#cdd0d5;font-weight:550}
-
-    .kelly-layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(270px,.7fr);gap:14px}
-    .equity-panel{padding:22px}
-    .equity-top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}
-    .equity-legend{display:flex;align-items:center;gap:15px;color:#a0a5ad;font-size:9px}
-    .equity-legend span{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
-    .line-swatch{width:17px;height:2px;border-radius:2px;background:var(--coral)}
-    .line-swatch.raw{background:#8c9cff}
-    .equity-chart{width:100%;height:260px;margin-top:12px;overflow:visible}
-    .equity-chart text{fill:#727985;font:9px ui-monospace,monospace}
-    .equity-chart .gridline{stroke:rgba(255,255,255,.075);stroke-width:1}
-    .equity-chart .axisline{stroke:rgba(255,255,255,.13);stroke-width:1}
-    .equity-chart .fair-line{fill:none;stroke:#ff927c;stroke-width:2.3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px rgba(255,138,115,.3))}
-    .equity-chart .raw-line{fill:none;stroke:#8e9cff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
-    .equity-chart .start-line{stroke:rgba(255,255,255,.25);stroke-width:1;stroke-dasharray:4 5}
-    .kelly-stats{display:grid;gap:10px}
-    .kelly-config{padding:18px 19px}
-    .config-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.055);color:#888f99;font-size:9px}
-    .config-row:last-child{border:0;padding-bottom:0}
-    .config-row strong{color:#e5e7ea;font:10px/1 ui-monospace,monospace}
-    .equity-stat{padding:16px 18px;border:1px solid rgba(255,255,255,.075);border-radius:12px;background:linear-gradient(140deg,rgba(14,16,21,.94),rgba(8,9,12,.94))}
-    .equity-stat.fair{border-color:rgba(255,138,115,.18)}
-    .equity-stat.raw{border-color:rgba(138,156,255,.18)}
-    .equity-stat .stat-label{color:#8b919b;font-size:9px}
-    .equity-stat strong{display:block;margin-top:9px;color:#fff;font:500 21px/1 ui-monospace,monospace;letter-spacing:-.045em}
-    .equity-stat .stat-detail{display:flex;justify-content:space-between;gap:10px;margin-top:9px;color:#848a94;font:9px/1.4 ui-monospace,monospace}
-    .equity-stat .positive{color:#f1a08f}.equity-stat .negative{color:#a3afff}
-    .risk-note{margin:15px 0 0;color:#7f858e;font-size:9px;line-height:1.65}
-
-    .research-note{margin-top:24px;padding:15px 18px;border-left:2px solid rgba(255,138,115,.55);background:linear-gradient(90deg,rgba(240,96,90,.055),transparent 80%);color:#8d939c;font-size:9px;line-height:1.7}
-    .research-note strong{color:#d5d8dd;font-weight:550}
-    .site-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:32px;align-items:start;margin-top:72px;padding-top:25px;border-top:1px solid rgba(255,255,255,.2)}
-    .footer-brand{display:flex;align-items:flex-start;gap:17px;max-width:690px}
-    .footer-mark{flex:0 0 auto;width:42px;height:29px;color:#fff;opacity:0;animation:fade .5s ease 1.22s forwards}
-    .footer-mark path{fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:square;stroke-linejoin:bevel}
-    .footer-copy{margin:0;color:#8d939c;font-size:10px;line-height:1.75}
-    .footer-links{display:flex;flex-direction:column;align-items:flex-end;gap:8px;color:#aaaeb5;font-size:10px}
-    .footer-links a{text-decoration:none;text-underline-offset:4px;transition:color .2s,text-decoration-color .2s}
-    .footer-links a:hover{color:#fff;text-decoration:underline;text-decoration-color:var(--coral)}
-    .footer-bottom{display:flex;justify-content:space-between;gap:20px;margin-top:23px;padding-top:15px;border-top:1px solid rgba(255,255,255,.08);color:#666c75;font:9px/1.5 ui-monospace,monospace}
-    .footer-bottom a{color:#999fa8;text-decoration:none}
-    .footer-bottom a:hover{color:#fff;text-decoration:underline;text-decoration-color:var(--coral);text-underline-offset:4px}
-
-    dialog{width:min(680px,calc(100% - 30px));max-height:min(84dvh,720px);padding:0;border:1px solid rgba(255,138,115,.35);border-radius:16px;color:#fff;background:#0a0b0e;box-shadow:0 30px 120px rgba(0,0,0,.7)}
-    dialog::backdrop{background:rgba(0,0,0,.77);backdrop-filter:blur(6px)}
-    .modal-inner{padding:clamp(22px,4cqw,36px)}
-    .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
-    .modal-head h3{margin:8px 0 0;font-size:23px;font-weight:580;letter-spacing:-.045em}
-    .modal-close{width:34px;height:34px;border:1px solid rgba(255,255,255,.13);border-radius:50%;background:#101217;color:#bbb;cursor:pointer}
-    .modal-copy{max-width:570px;margin:15px 0 21px;color:#a0a6af;font-size:11px;line-height:1.75}
-    .pseudo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .pseudo-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:11px;background:#0f1116}
-    .pseudo-card h4{margin:0;color:#e9eaec;font-size:11px;font-weight:550}
-    .pseudo-card p{min-height:42px;margin:9px 0 14px;color:#89909a;font-size:9px;line-height:1.55}
-    .pseudo-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .pseudo-metrics div{padding:9px;border-radius:8px;background:rgba(255,255,255,.035)}
-    .pseudo-metrics span{display:block;color:#7b828d;font-size:8px}
-    .pseudo-metrics strong{display:block;margin-top:6px;color:#ff9f8c;font:13px/1 ui-monospace,monospace}
-    .modal-foot{margin:17px 0 0;color:#737a85;font-size:9px;line-height:1.6}
-    .loading{min-height:200px;display:grid;place-items:center;color:#979da6;font:11px/1.6 ui-monospace,monospace}
-    .load-error{max-width:580px;margin:70px auto;padding:22px;border:1px solid rgba(255,138,115,.3);border-radius:12px;color:#e9b2a7;background:#0c0d11;font-size:12px;line-height:1.7}
-
-    @keyframes frame-draw{to{transform:scaleX(1)}}
-    @keyframes rise{to{opacity:1;transform:translateY(0)}}
-    @keyframes fade{to{opacity:1}}
-    @keyframes expand{to{opacity:1;transform:scaleX(1)}}
-
-    @media(max-width:900px){
-      .page{padding-inline:3.7cqw}
-      .topbar{height:70px}
-      .top-links{gap:16px}
-      .hero-card{height:min(44cqw,42dvh);min-height:270px}
-      .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .metric{min-height:108px}
-      .section-head{align-items:flex-start;flex-direction:column;gap:10px}
-      .radar-layout{grid-template-columns:1fr}
-      .radar-side{grid-template-columns:1fr 1fr;grid-template-rows:auto}
-      .factor-shell{grid-template-columns:1fr}
-      .factor-list{grid-template-columns:repeat(3,minmax(0,1fr))}
-      .kelly-layout{grid-template-columns:1fr}
-      .kelly-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .kelly-config{grid-column:1/-1}
-      .risk-note{grid-column:1/-1}
-    }
-    @media(max-width:620px){
-      .page{padding:0 16px 34px}
-      .topbar{height:64px}
-      .brand-mark{width:29px;height:29px}
-      .brand-name{font-size:9px}
-      .brand-sub{font-size:8px}
-      .top-links a:not(.top-github){display:none}
-      .top-github{padding:9px 11px;font-size:9px}
-      .hero{padding-top:16px}
-      .hero-card{height:min(335px,52dvh);min-height:300px;border-radius:16px}
-      .hero-plate,.hero-video{object-position:72% 50%}
-      .hero-shade{background:linear-gradient(90deg,rgba(0,0,0,.71),rgba(0,0,0,.32)),linear-gradient(180deg,rgba(0,0,0,.12),transparent 58%,rgba(0,0,0,.2))}
-      .hero-content{width:calc(100% - 28px);padding:17px 0}
-      .eyebrow{font-size:8px;letter-spacing:.12em}
-      h1{margin:15px 0 10px;font-size:clamp(27px,7.5cqw,34px)}
-      .hero-copy{max-width:380px;font-size:11px;line-height:1.65}
-      .hero-actions{gap:7px;margin-top:18px}
-      .button{min-height:39px;padding-inline:13px;font-size:9px}
-      .metrics{gap:8px;margin-top:10px}
-      .metric{min-height:96px;padding:14px 13px 12px;border-radius:11px}
-      .metric-label{font-size:7px;letter-spacing:.08em}
-      .metric-value{margin-top:10px;font-size:clamp(20px,6cqw,25px)}
-      .metric-note{margin-top:7px;font-size:8px}
-      .section{margin-top:71px;scroll-margin-top:22px}
-      .section-head{margin-bottom:17px}
-      .section-kicker{font-size:8px}
-      h2{font-size:25px}
-      .section-desc{font-size:10px}
-      .radar-panel{padding:15px}
-      .radar-toolbar{align-items:flex-start;flex-direction:column;padding-bottom:14px}
-      .match-select{max-width:none;width:100%}
-      .fixture-line{gap:8px;padding:17px 0 15px}
-      .fixture-teams{gap:7px;font-size:14px}
-      .fixture-vs{font-size:8px}
-      .score-pill{padding:7px 8px;font-size:10px}
-      .score-pill span{font-size:8px}
-      .model-row{grid-template-columns:78px minmax(0,1fr);gap:9px}
-      .model-name{font-size:8px}
-      .prob-bar{height:9px}
-      .prob-labels{font-size:8px}
-      .radar-foot{gap:8px;margin-top:14px;font-size:8px}
-      .radar-side{grid-template-columns:1fr;gap:9px}
-      .goals-panel,.drivers-panel{padding:15px}
-      .xg-grid{margin-top:12px}
-      .xg-cell{padding:10px}
-      .xg-cell strong{font-size:19px}
-      .factor-picker,.factor-main{padding:15px}
-      .factor-list{grid-template-columns:1fr 1fr;gap:6px}
-      .factor-choice{min-height:53px;padding:8px}
-      .factor-choice span{font-size:8px}
-      .factor-choice small{font-size:7px}
-      .factor-topline{gap:12px}
-      .factor-title{font-size:14px}
-      .factor-stat strong{font-size:13px}
-      .factor-desc{font-size:9px}
-      .quantile-chart{height:195px;gap:6px;margin-top:18px;padding-bottom:26px}
-      .quantile-bar-area{height:132px;width:min(100%,43px)}
-      .quantile-value{font-size:8px}
-      .quantile-label{font-size:8px}
-      .factor-foot{font-size:8px}
-      .compare-head{align-items:flex-start;flex-direction:column;padding:15px}
-      .compare-legend{gap:10px;font-size:8px}
-      .compare-note{flex-direction:column;gap:4px;padding:12px 15px;font-size:8px}
-      .equity-panel{padding:15px}
-      .equity-top{align-items:flex-start;flex-direction:column;gap:12px}
-      .equity-legend{font-size:8px}
-      .equity-chart{height:210px;margin-top:7px}
-      .kelly-stats{grid-template-columns:1fr 1fr;gap:8px}
-      .equity-stat{padding:13px}
-      .equity-stat strong{font-size:17px}
-      .equity-stat .stat-detail{font-size:8px}
-      .kelly-config{padding:15px}
-      .risk-note{font-size:8px}
-      .site-footer{grid-template-columns:1fr;gap:20px;margin-top:51px;padding-top:19px}
-      .footer-brand{gap:12px}
-      .footer-mark{width:35px}
-      .footer-copy{font-size:9px}
-      .footer-links{align-items:flex-start;font-size:9px}
-      .footer-bottom{flex-direction:column;gap:6px;margin-top:18px;font-size:8px}
-      .pseudo-grid{grid-template-columns:1fr}
-      .pseudo-card p{min-height:auto}
-    }
-    @media(prefers-reduced-motion:reduce){
-      html{scroll-behavior:auto}
-      *,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;transition-duration:.01ms!important}
-      .hero-video{display:none!important}
-      .hero-card::before{transform:scaleX(1)}
-      h1,.hero-copy,.hero-actions,.footer-mark{opacity:1;transform:none}
-    }
-  </style>
+.agent-layout{display:grid;grid-template-columns:minmax(0,.94fr) minmax(0,1.06fr);gap:13px;align-items:stretch}
+.terminal-window,.report-window{min-width:0;overflow:hidden;border:1px solid rgba(255,255,255,.10);border-radius:15px;background:linear-gradient(145deg,rgba(13,14,18,.94),rgba(5,6,8,.97));box-shadow:inset 0 1px rgba(255,255,255,.03)}
+.terminal-top,.report-top{min-height:47px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.018)}
+.terminal-dots{display:flex;align-items:center;gap:5px}.terminal-dots i{width:6px;height:6px;border-radius:50%;background:#44454b}.terminal-dots i:first-child{background:#f28476}.terminal-dots i:nth-child(2){background:#d4a15f}.terminal-dots i:nth-child(3){background:#6eaa83}
+.terminal-title,.report-file{color:#aaaab1;font:7px/1 ui-monospace,monospace;letter-spacing:.11em;text-transform:uppercase}.terminal-online{display:inline-flex;align-items:center;gap:6px;color:#a4d4b8;font:7px/1 ui-monospace,monospace;white-space:nowrap}.terminal-online::before{content:"";width:5px;height:5px;border-radius:50%;background:#70d09a;box-shadow:0 0 8px rgba(112,208,154,.8)}
+.terminal-body{min-height:265px;padding:17px 17px 10px}.terminal-intro{display:flex;justify-content:space-between;gap:12px;margin-bottom:15px;color:#777982;font:7px/1.45 ui-monospace,monospace}.latency{color:#f0ad9f}
+.message{margin:0 0 13px}.message-role{display:flex;align-items:center;gap:7px;margin-bottom:6px;color:#ef9a8b;font:7px/1 ui-monospace,monospace;letter-spacing:.12em}.message-role.answer-role{color:#9bcdb0}.message-text{color:#d2d2d6;font-size:9px;line-height:1.7}.message-answer{padding:10px 11px;border:1px solid rgba(140,222,182,.11);border-radius:9px;background:rgba(140,222,182,.035);color:#becbc3}
+.evidence-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.evidence-tag{padding:5px 7px;border:1px solid rgba(140,222,182,.15);border-radius:5px;color:#94c4a7;background:rgba(140,222,182,.035);font:6px/1 ui-monospace,monospace}
+.terminal-log{max-height:112px;overflow:auto;scrollbar-color:#3a3b40 transparent;scrollbar-width:thin}
+.query-form{display:flex;align-items:center;gap:6px;margin:0 14px 13px;padding:5px 6px 5px 13px;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:#030304;transition:border-color .2s,box-shadow .2s}.query-form:hover,.query-form:focus-within{border-color:rgba(255,138,115,.66);box-shadow:0 0 0 3px rgba(240,96,90,.055)}
+.query-form input{min-width:0;flex:1;height:32px;border:0;outline:none;background:transparent;color:#f4f4f5;font-size:9px}.query-form input::placeholder{color:#808081}
+.query-submit{min-height:32px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 13px;border:0;border-radius:999px;background:linear-gradient(110deg,#ff8a73,#f0605a);color:#1b0c0b;box-shadow:inset 0 1px 0 rgba(255,255,255,.42);font-size:8px;font-weight:700;cursor:pointer;transition:transform .18s,box-shadow .18s,filter .18s}.query-submit:hover{transform:translateY(-1px);filter:saturate(1.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 6px 17px rgba(240,96,90,.25)}
+.quick-prompts{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:0 14px 13px}.quick-prompts button{padding:6px 8px;border:1px solid rgba(255,255,255,.09);border-radius:999px;background:rgba(255,255,255,.025);color:#999aa2;font-size:7px;cursor:pointer;transition:color .2s,border-color .2s}.quick-prompts button:hover{color:#f0b0a3;border-color:rgba(255,138,115,.32)}
+.report-top{padding-right:13px}.report-control{display:inline-flex;align-items:center;gap:5px;padding:4px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:#07080a}.report-control button{padding:6px 9px;border:0;border-radius:999px;background:transparent;color:#82848d;font:7px/1 ui-monospace,monospace;cursor:pointer;transition:color .2s,background .2s}.report-control button[aria-pressed="true"]{background:rgba(255,138,115,.14);color:#ffc0b3}
+.report-comparison{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding:12px}.report-pane{min-width:0;min-height:276px;overflow:hidden;border:1px solid rgba(255,255,255,.075);border-radius:10px;background:#08090c}
+.pane-label{display:flex;justify-content:space-between;gap:8px;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);color:#8b8d96;font:7px/1 ui-monospace,monospace;letter-spacing:.07em}.pane-label span:last-child{color:#5f616a}
+.markdown-raw{margin:0;padding:12px;color:#aeb0b7;font:8px/1.8 ui-monospace,monospace;white-space:pre-wrap}.markdown-raw b{color:#ffc0b3;font-weight:500}
+.html-report{padding:12px 13px 14px}.html-report h4{margin:0;color:#f2f2f4;font-size:12px;font-weight:600;letter-spacing:-.025em}.report-stamp{display:inline-flex;align-items:center;gap:6px;margin:8px 0 11px;color:#858791;font:6px/1 ui-monospace,monospace;letter-spacing:.07em}.report-stamp::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--coral)}
+.html-report p{margin:0 0 9px;color:#a4a5ad;font-size:8px;line-height:1.65}.report-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:9px 0}.report-stat{padding:7px 6px;border:1px solid rgba(255,255,255,.07);border-radius:6px;background:rgba(255,255,255,.025)}.report-stat span{display:block;color:#747680;font-size:6px}.report-stat strong{display:block;margin-top:5px;color:#e7e7e9;font:10px/1 ui-monospace,monospace}
+.report-highlight{margin-top:9px;padding:8px;border-left:2px solid #f0ae74;background:rgba(255,196,122,.055);color:#d3ba9d;font-size:7px;line-height:1.55}
+.json-preview{display:none;max-height:340px;margin:12px;overflow:auto;border:1px solid rgba(255,255,255,.07);border-radius:9px;background:#050608}.json-preview pre{margin:0;padding:13px;color:#a9d2b6;font:8px/1.65 ui-monospace,monospace;white-space:pre}
+.report-window[data-view="json"] .report-comparison{display:none}.report-window[data-view="json"] .json-preview{display:block}
+.report-foot{display:flex;justify-content:space-between;gap:12px;padding:0 14px 13px;color:#6d6f78;font-size:7px;line-height:1.5}
+.developer-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:13px}.code-card,.trust-card{padding:18px}
+.code-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}.code-head strong{color:#e6e6e8;font-size:10px;font-weight:570}
+.copy-button{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.035);color:#b7b8bf;font-size:7px;cursor:pointer;transition:border-color .2s,color .2s}.copy-button:hover{border-color:rgba(255,138,115,.42);color:#ffd0c7}
+.code-block{margin:0;overflow:auto;padding:15px;border:1px solid rgba(255,255,255,.075);border-radius:10px;background:#030405;color:#c5d7cb;font:8px/1.85 ui-monospace,monospace;white-space:pre}
+.code-note{margin:10px 1px 0;color:#73757e;font-size:8px;line-height:1.55}
+.trust-card{display:flex;flex-direction:column;justify-content:space-between}.trust-card h3{margin:0;color:#ededee;font-size:15px;font-weight:590;letter-spacing:-.03em}.trust-card p{margin:8px 0 0;color:#9697a0;font-size:9px;line-height:1.7}
+.trust-badges{display:flex;flex-wrap:wrap;gap:7px;margin-top:17px}.trust-badge{padding:7px 9px;border:1px solid rgba(255,255,255,.10);border-radius:999px;background:rgba(255,255,255,.025);color:#b3b4bb;font:7px/1 ui-monospace,monospace}.trust-badge.good{border-color:rgba(140,222,182,.2);color:#a8dcb9;background:rgba(140,222,182,.035)}
+.repo-link{display:inline-flex;align-items:center;gap:8px;margin-top:19px;color:#ffc0b3;font-size:9px;text-decoration:none}.repo-link:hover{text-decoration:underline;text-underline-offset:4px}
+.footer{padding-top:clamp(48px,5.4cqw,74px)}.footer-main{display:grid;grid-template-columns:1.25fr .75fr;gap:36px;padding:24px 0 27px;border-top:1px solid rgba(255,255,255,.2)}
+.footer-brand-row{display:flex;align-items:center;gap:15px}.footer-mark{height:31px;display:inline-flex;align-items:center;gap:5px;opacity:0;animation:fade .7s ease 1.38s forwards}.footer-mark i{width:6px;height:25px;display:block;border-radius:2px;background:linear-gradient(180deg,#ffa18f,#ee5a55);transform:skew(-20deg)}.footer-mark i:nth-child(2){height:31px;opacity:.82}.footer-mark i:nth-child(3){height:22px;opacity:.62}
+.footer-brand-name{color:#f0f0f1;font-size:10px;font-weight:730;letter-spacing:.13em}.footer-summary{max-width:540px;margin:13px 0 0;color:#92939b;font-size:9px;line-height:1.75}
+.footer-links{display:grid;grid-template-columns:1fr 1fr;gap:22px;justify-content:end}.footer-column h4{margin:0 0 11px;color:#e5e5e7;font-size:8px;font-weight:600}.footer-column a,.footer-column p{display:block;margin:7px 0 0;color:#8d8f98;font-size:8px;line-height:1.65;text-decoration:none}.footer-column a{width:fit-content;transition:color .2s}.footer-column a:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}
+.footer-bottom{display:flex;justify-content:space-between;gap:15px;padding-top:13px;border-top:1px solid rgba(255,255,255,.13);color:#6f717a;font:7px/1.4 ui-monospace,monospace;letter-spacing:.035em}.footer-bottom strong{color:#9b9ca3;font-weight:500}
+@keyframes frame-draw{to{transform:scaleX(1)}}@keyframes rise{to{opacity:1;transform:translateY(0)}}@keyframes fade{to{opacity:1}}@keyframes expand{to{opacity:1;transform:scaleX(1)}}@keyframes button-pop{to{transform:scale(1);opacity:1}}
+@media(min-width:601px) and (max-width:900px){.page{--u:calc(100cqw / 768);--v:min(calc(100cqw / 768),calc(100dvh / 700))}}
+@media(min-width:601px) and (max-width:900px) and (max-height:680px){.page{--v:min(calc(100cqw / 768),calc(100dvh / 612))}}
+@media(max-width:960px){.radar-grid,.agent-layout{grid-template-columns:1fr}.side-stack{grid-template-columns:1fr 1fr;grid-template-rows:auto}.developer-grid{grid-template-columns:1fr}.trust-card{min-height:180px}}
+@media(max-width:760px){.nav-links{display:none;position:absolute;top:calc(100% + 1px);left:0;right:0;padding:13px;border:1px solid rgba(255,255,255,.12);border-top:0;border-radius:0 0 13px 13px;background:rgba(5,6,8,.98);box-shadow:0 20px 35px rgba(0,0,0,.55)}.nav-links.open{display:flex;flex-wrap:wrap;justify-content:space-between}.nav-links a{padding:8px 5px}.menu-toggle{display:block}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.section-head{align-items:start;flex-direction:column;gap:10px}.section-aside{text-align:left}.section{padding-top:54px}}
+@media(max-width:600px){
+.page{--u:calc(100cqw / 390);--v:min(calc(100cqw / 390),calc(100dvh / 655));padding-inline:17px;padding-bottom:28px}.topbar{height:64px}.hero{padding-top:13px}
+.hero-card{min-height:342px;height:max(342px,min(calc(374 * var(--u)),calc(390 * var(--v))));border-radius:17px}.hero-content{width:90%;padding:19px 0}.eyebrow{font-size:7px}h1{margin:13px auto 10px;max-width:355px;font-size:clamp(26px,calc(29 * var(--u)),33px);line-height:1.08}.hero-copy{max-width:335px;font-size:10px;line-height:1.6}
+.hero-action-shell{margin-top:17px;min-height:44px;padding-left:12px}.hero-action-context{font-size:8px}.hero-action-button{min-height:33px;padding:0 10px;font-size:8px}.hero-meta{font-size:6px;letter-spacing:.06em}
+.metric{min-height:103px;padding:14px 13px}.metric-label{font-size:7px}.metric-value{font-size:21px}.metric-copy{font-size:8px}.section-title{font-size:25px}
+.radar-shell{padding:11px;border-radius:13px}.radar-topline{align-items:start;flex-direction:column}.radar-ident{font-size:7px}.live-pill{font-size:6px}.probability-panel{padding:13px 11px 11px}
+.fixture-line{align-items:flex-start;flex-direction:column;gap:11px}.fixture-context{flex-direction:row;align-items:center;text-align:left}.team-name{font-size:12px}.team-badge{width:31px;height:31px}.side-stack{grid-template-columns:1fr}.divergence-card{padding:15px}.timeline-panel{padding:13px 11px}.timeline-head{flex-direction:column}.timeline-legend{justify-content:start}.timeline-caption{flex-direction:column}
+.report-top{align-items:flex-start;flex-direction:column;padding:11px 12px}.report-control{width:100%;justify-content:center}.report-control button{flex:1}.report-comparison{grid-template-columns:1fr;padding:9px}.report-pane{min-height:auto}.html-report{min-height:222px}.markdown-raw{min-height:215px}.json-preview{max-height:285px}.report-foot{flex-direction:column;gap:5px}
+.terminal-body{min-height:240px;padding:13px 12px 9px}.terminal-top{padding-inline:12px}.terminal-title{font-size:6px}.terminal-intro{font-size:6px}.query-form{margin-inline:9px;padding-left:10px}.query-form input{font-size:8px}.quick-prompts{padding-inline:9px}
+.developer-grid{grid-template-columns:1fr}.code-card,.trust-card{padding:14px}.code-block{font-size:7px}.footer-main{grid-template-columns:1fr;gap:24px;padding:22px 0}.footer-links{grid-template-columns:1fr 1fr}.footer-bottom{flex-direction:column;gap:6px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.hero-video{display:none!important}.hero-card::before,h1,.hero-copy,.hero-action-shell,.hero-action-button,.footer-mark{opacity:1;transform:none}}
+</style>
 </head>
 <body>
-  <main class="site-shell">
-    <div class="page">
-      <header class="topbar">
-        <a class="brand" href="#top" aria-label="MatchQuant 首页">
-          <span class="brand-mark" aria-hidden="true">MQ</span>
-          <span><span class="brand-name">MATCHQUANT</span><span class="brand-sub">RESEARCH ENGINE · V1</span></span>
-        </a>
-        <nav class="top-links" aria-label="页面导航">
-          <a href="#radar">比赛分析</a>
-          <a href="#factor-lab">比赛因素</a>
-          <a href="#walk-forward">五季测试</a>
-          <a href="#paper-book">资金模拟</a>
-          <a class="top-github" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">GitHub · MatchQuant V1</a>
-        </nav>
-      </header>
+<div class="site-shell">
+<main class="page">
+<header class="topbar">
+<a class="brand" href="#top" aria-label="MatchQuant 首页"><span class="brand-mark">MQ</span><span><span class="brand-name">MATCHQUANT</span><span class="brand-sub">FOOTBALL ASSET PRICING</span></span></a>
+<nav class="nav-links" id="site-nav" aria-label="主导航"><a href="#radar">实战雷达</a><a href="#agent">Agent / Reports</a><a href="#open-source">开发者</a><a class="nav-github" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noreferrer">开源仓库</a></nav>
+<button class="menu-toggle" id="menu-toggle" type="button" aria-label="展开导航" aria-expanded="false"><span></span></button>
+</header>
 
-      <section class="hero" id="top" aria-labelledby="hero-title">
-        <div class="hero-card">
-          <img class="hero-plate" src="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/03c58212-3a59-4c80-b19d-30d05a174563.webp" alt="" fetchpriority="high">
-          <video class="hero-video" muted autoplay loop playsinline preload="auto" aria-hidden="true">
-            <source src="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/f6f4ec49-d5dd-4893-8eb4-fa0f932aceaf.mp4" type="video/mp4">
-          </video>
-          <div class="hero-shade" aria-hidden="true"></div>
-          <div class="hero-content">
-            <div class="eyebrow">英超比赛概率研究</div>
-            <h1 id="hero-title">一场比赛有多少种可能？<br><em>把概率和依据都摆出来。</em></h1>
-            <p class="hero-copy">MatchQuant 用 11 个英超赛季、4,180 场比赛的数据，估算主胜、平局和客胜的概率。你可以逐场查看模型参考了什么，也能看看它在过往赛季里的表现。</p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#walk-forward">看五季测试结果 <span class="button-arrow" aria-hidden="true">↓</span></a>
-              <a class="button button-quiet" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">查看 GitHub 项目 <span class="button-arrow" aria-hidden="true">↗</span></a>
-            </div>
-          </div>
-        </div>
+<section class="hero" id="top">
+<div class="hero-card" id="hero-card">
+<img class="hero-plate" src="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/03c58212-3a59-4c80-b19d-30d05a174563.webp" alt="" aria-hidden="true">
+<video class="hero-video" id="hero-video" muted loop playsinline preload="none" aria-hidden="true"><source src="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/f6f4ec49-d5dd-4893-8eb4-fa0f932aceaf.mp4" type="video/mp4"></video>
+<div class="hero-shade"></div>
+<div class="hero-content">
+<div class="eyebrow">MATCHQUANT V2.0&nbsp; / &nbsp;INSTITUTIONAL RESEARCH</div>
+<h1>MatchQuant v2.0: Multi-Factor Football Asset Pricing Engine</h1>
+<p class="hero-copy">别用感性猜球，别用黑盒拟合比分。以严密的多因子定价逻辑与非线性去水方法，为英超赛事真实胜率与风险科学定价。</p>
+<a class="hero-action-shell" href="#radar"><span class="hero-action-context" id="hero-fixture">标杆案例 · Chelsea vs Man United · 2026-10-31</span><span class="hero-action-button">查看实战雷达 <i>↗</i></span></a>
+<div class="hero-meta">12-SEASON EPL DATASET&nbsp; · &nbsp;STATIC SAMPLE&nbsp; · &nbsp;NO BACKEND REQUIRED</div>
+</div>
+</div>
+<div class="metrics" aria-label="MatchQuant v2.0 核心指标">
+<article class="metric"><div class="metric-label">EPL HISTORICAL COVERAGE</div><div class="metric-value"><span class="mono">4,260</span> 场</div><div class="metric-copy">2015-16 至 2026-27 进行中赛季最新轮次</div></article>
+<article class="metric"><div class="metric-label">ORTHOGONAL FUNDAMENTALS</div><div class="metric-value"><span class="mono">12</span> 个因子</div><div class="metric-copy">扣除动态 Elo 后，检验残差增量信息</div></article>
+<article class="metric"><div class="metric-label">NON-LINEAR DEVIG</div><div class="metric-value"><span class="mono">Power</span> 去水</div><div class="metric-copy">用幂次法调整市场抽水与长赔偏差</div></article>
+<article class="metric"><div class="metric-label">AUTOMATED QUALITY GATE</div><div class="metric-value"><span class="mono">112</span> 项</div><div class="metric-copy">严苛自动化测试 · 历史验收记录 <span class="mono">100%</span></div></article>
+</div>
+</section>
 
-        <div class="metrics" id="performance" aria-label="研究摘要指标">
-          <article class="metric">
-            <div class="metric-label">英超历史比赛</div>
-            <div class="metric-value">4,180</div>
-            <div class="metric-note">11 个赛季 · 2015–16 至 2025–26</div>
-          </article>
-          <article class="metric">
-            <div class="metric-label">五季对照球队实力模型</div>
-            <div class="metric-value">5 / 5</div>
-            <div class="metric-note">五季的两项概率评分都更低，越低表示越贴近赛果</div>
-          </article>
-          <article class="metric">
-            <div class="metric-label">相对收盘赔率的平均改善</div>
-            <div class="metric-value coral">+0.354<small style="font-size:.47em;letter-spacing:0">%</small></div>
-            <div class="metric-note">相当于 35.4 bps · 54.25% 的模拟交易优于收盘赔率</div>
-          </article>
-          <article class="metric">
-            <div class="metric-label">通过筛选的比赛因素</div>
-            <div class="metric-value">12</div>
-            <div class="metric-note">3 个基础参考项 + 9 个额外信息项</div>
-          </article>
-        </div>
-      </section>
+<section class="section" id="radar">
+<div class="section-head"><div class="section-head-main"><div class="section-kicker"><b>01 /</b> INTERACTIVE MATCHDAY RADAR</div><h2 class="section-title">一场比赛，三套定价视角。</h2><p class="section-copy">Track A 隔离赔率，只看球队基本面；市场线经 Power 幂次法去水；动态 Elo 提供实力基准。下方均为文档内置静态样例，不调用后端。</p></div><div class="section-aside">CASE FILE&nbsp; / &nbsp;EPL 2026–27&nbsp; / &nbsp;ROUND 9</div></div>
+<div class="radar-shell glass">
+<div class="radar-topline"><div class="radar-ident">MATCH REPORT&nbsp; / &nbsp;2026-10-31&nbsp; / &nbsp;CHELSEA (H) VS MAN UNITED (A)</div><div class="live-pill">OFFLINE SAMPLE&nbsp; · &nbsp;STATIC DATA</div></div>
+<div class="radar-grid">
+<article class="subpanel probability-panel">
+<div class="fixture-line"><div class="fixture-teams"><span class="team-badge chelsea" aria-hidden="true">CFC</span><span class="team-name" id="home-team">Chelsea</span><span class="fixture-vs">VS</span><span class="team-badge united" aria-hidden="true">MUN</span><span class="team-name" id="away-team">Man United</span></div><div class="fixture-context"><span id="fixture-date">31 OCT 2026</span><span>HOME&nbsp; / &nbsp;AWAY</span></div></div>
+<div class="chart-title-row"><span class="chart-title">1X2 outcome probability</span><span class="chart-unit">PROBABILITY&nbsp; / &nbsp;0—60%</span></div>
+<div class="model-legend" aria-label="模型图例"><span><i class="legend-dot legend-track"></i>Track A · fundamentals</span><span><i class="legend-dot legend-market"></i>Market · Power devig</span><span><i class="legend-dot legend-elo"></i>Elo · baseline</span></div>
+<div class="probability-chart-wrap"><svg id="probability-chart" viewBox="0 0 700 276" role="img" aria-label="切尔西胜、平局和曼联胜的三模型概率比较"></svg></div>
+<div class="chart-note"><span><strong>Track A</strong> 不读取外部赔率；市场组为去水隐含概率。</span><span id="chart-xg-note">预期进球 <strong class="mono">1.41 : 1.31</strong>&nbsp; / &nbsp;净差 <strong class="mono">+0.10</strong></span></div>
+</article>
+<div class="side-stack">
+<article class="divergence-card"><div class="warning-label"><i>!</i> SIGNIFICANT DIVERGENCE&nbsp; / &nbsp;THRESHOLD <span id="divergence-threshold">8.0</span> PP</div><div class="divergence-number mono" id="divergence-home">−13.3<small> pp</small></div><div class="divergence-sub" id="divergence-summary">切尔西主胜：Track A <span class="mono">38.9%</span> 对市场 <span class="mono">52.2%</span>。模型只给出微弱主场优势，市场价格体现更强的主队倾向。</div><div class="divergence-pairs"><div class="divergence-pair"><span>主胜偏离 · Track A − Market</span><strong id="home-diff">−13.3 pp</strong></div><div class="divergence-pair"><span>客胜偏离 · Track A − Market</span><strong id="away-diff">+10.5 pp</strong></div></div></article>
+<article class="subpanel pricing-panel">
+<div class="pricing-head"><strong>MARKET SNAPSHOT&nbsp; / &nbsp;1X2</strong><span>POWER DEVIGGED</span></div>
+<table class="quote-table" aria-label="欧赔与去水概率比较"><thead><tr><th>OUTCOME</th><th>ODDS</th><th>FAIR P</th><th>VALUE EDGE</th></tr></thead><tbody>
+<tr><td class="quote-outcome" id="home-outcome">Chelsea win</td><td class="price-value" id="odds-home">1.83</td><td class="price-value" id="market-prob-home">52.2%</td><td class="edge-value negative" id="edge-home">−35.18%</td></tr>
+<tr><td class="quote-outcome">Draw</td><td class="price-value" id="odds-draw">3.75</td><td class="price-value" id="market-prob-draw">24.1%</td><td class="edge-value positive" id="edge-draw">+1.04%</td></tr>
+<tr><td class="quote-outcome" id="away-outcome">Man United win</td><td class="price-value" id="odds-away">3.80</td><td class="price-value" id="market-prob-away">23.7%</td><td class="edge-value positive" id="edge-away">+43.00%</td></tr>
+</tbody></table>
+<div class="market-note"><span class="market-chip">EXPECTED GOALS<strong id="xg-market">1.41 : 1.31</strong></span><span class="market-chip ah">ASIAN HANDICAP<strong id="spread-ah">−0.75</strong></span></div>
+</article>
+</div>
+</div>
+<article class="subpanel timeline-panel">
+<div class="timeline-head"><div><div class="timeline-title">Steam Drift&nbsp; / &nbsp;odds &amp; fair probability</div><div class="timeline-meta">UTC WINDOW&nbsp; <span id="timeline-range">02:17Z — 02:49Z</span>&nbsp; · &nbsp;<span class="mono" id="timeline-count">7</span> OBSERVATION NODES&nbsp; · &nbsp;QUOTE STATE: STEADY</div></div>
+<div class="timeline-legend" aria-label="时序图例"><span><i class="legend-dot legend-home"></i>Home odds</span><span><i class="legend-dot legend-draw"></i>Draw odds</span><span><i class="legend-dot legend-away"></i>Away odds</span><span><i class="legend-dot legend-fair"></i>Home fair P</span></div></div>
+<div class="timeline-wrap"><svg id="timeline-chart" viewBox="0 0 760 250" role="img" aria-label="七个时点的欧赔和去水主胜概率折线图"></svg></div>
+<div class="timeline-caption"><span id="timeline-summary"><strong>报价维持在 <span class="mono">1.83 / 3.75 / 3.80</span>，主胜去水概率为 <span class="mono">52.16%</span>。</strong>稳定报价显示水位未漂移，亚盘线保持主让 <span class="mono">−0.75</span>。</span><span>静态对象列有 4 个精确时间戳；图中其余 3 个节点按指南所述“报价维持”作区间延续展示，不代表新增原始 API 快照。</span></div>
+</article>
+<div class="chart-note"><span id="pricing-summary-note">定价错配：基本面预期净胜 <strong class="mono">+0.10</strong> 球，对位市场主让 <strong class="mono">−0.75</strong> 球。</span><span>历史样例仅用于方法演示，不构成投注建议。</span></div>
+</div>
+</section>
 
-      <section class="section" id="radar" aria-labelledby="radar-title">
-        <div class="section-head">
-          <div>
-            <div class="section-kicker">01 / 看一场比赛</div>
-            <h2 id="radar-title">看看模型怎样估算赛果概率</h2>
-          </div>
-          <p class="section-desc">选一场历史比赛，看看球队实力模型、基本面模型和参考开盘赔率的模型分别给出多大胜、平、负概率。下方还列出预期进球、大球概率，以及推动主胜概率变化的三项数据。</p>
-        </div>
-        <div class="radar-layout">
-          <article class="panel radar-panel">
-            <div class="radar-toolbar">
-              <div class="historic-tag">历史比赛 · <span id="matchday-date">2026-05-24</span></div>
-              <label class="sr-only" for="fixture-select">选择历史比赛</label>
-              <select class="match-select" id="fixture-select" aria-label="选择历史比赛"></select>
-            </div>
-              <div id="radar-content" class="loading">正在读取比赛样例…</div>
-          </article>
-          <div class="radar-side">
-            <article class="panel goals-panel">
-              <div class="panel-label">预期进球与大球概率</div>
-              <div id="goals-content" class="xg-grid"></div>
-            </article>
-            <article class="panel drivers-panel">
-              <div class="panel-label">哪些数据推高或拉低主胜概率</div>
-              <div id="drivers-content" class="driver-list"></div>
-            </article>
-          </div>
-        </div>
-      </section>
+<section class="section" id="agent">
+<div class="section-head"><div class="section-head-main"><div class="section-kicker"><b>02 /</b> AGENTIC INTELLIGENCE PREVIEW</div><h2 class="section-title">从自然语言，到可追溯的研究交付。</h2><p class="section-copy">交互演练仅检索预置静态证据，不启动模型、不重算概率。报告预览并排展示 Markdown 与 HTML 两种交付形态。</p></div><div class="section-aside">ZERO RECALCULATION&nbsp; / &nbsp;EVIDENCE-BOUND FOLLOW-UP</div></div>
+<div class="agent-layout">
+<article class="terminal-window" aria-label="MatchQuant Agent 交互模拟终端">
+<div class="terminal-top"><div class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></div><div class="terminal-title">MATCHQUANT AGENT SKILL&nbsp; / &nbsp;SESSION: CHE-MUN</div><div class="terminal-online">LOCAL DEMO</div></div>
+<div class="terminal-body"><div class="terminal-intro"><span>STATIC EVIDENCE RETRIEVAL</span><span>RECALCULATIONS&nbsp; <b class="mono">0</b></span></div>
+<div class="terminal-log" id="terminal-log" aria-live="polite">
+<div class="message"><div class="message-role">USER&nbsp; / &nbsp;INITIAL QUERY</div><div class="message-text">分析这周末切尔西打曼联的盘口，结合最新基本面给出深度报告。</div></div>
+<div class="message"><div class="message-role answer-role">MATCHQUANT&nbsp; / &nbsp;FOLLOW-UP READY</div><div class="message-text message-answer" id="initial-answer"></div><div class="evidence-tags"><span class="evidence-tag">E5_MARKET</span><span class="evidence-tag">TRACK_A</span><span class="evidence-tag">SPREAD_AH</span><span class="evidence-tag">0.005s · NO RECALC</span></div></div>
+</div></div>
+<form class="query-form" id="query-form"><input id="query-input" type="text" autocomplete="off" placeholder="继续提问：为什么盘口更看好切尔西？" aria-label="输入自然语言追问"><button class="query-submit" type="submit">追问 <span aria-hidden="true">↗</span></button></form>
+<div class="quick-prompts"><button type="button" data-prompt="为什么盘口更看好切尔西？">为什么盘口更看好切尔西？</button><button type="button" data-prompt="两边的预期进球和让球线匹配吗？">预期进球匹配让球线吗？</button></div>
+</article>
 
-      <section class="section" id="factor-lab" aria-labelledby="factor-title-heading">
-        <div class="section-head">
-          <div>
-            <div class="section-kicker">02 / 比赛因素</div>
-            <h2 id="factor-title-heading">哪些比赛因素真的有用？</h2>
-          </div>
-          <p class="section-desc">我们从 25 个候选因素、3,370 场比赛和 9 个赛季中筛选。图中展示 12 个入选因素：3 个基础参考项，以及 9 个在控制球队实力后仍提供额外信息的因素。每个因素按数值从低到高分成五组，图里比较各组的主队胜率。</p>
-        </div>
-        <div class="factor-shell">
-          <aside class="panel factor-picker">
-            <div class="factor-picker-head">
-              <span class="panel-label">入选的比赛因素</span>
-              <span class="factor-count" id="factor-count">12 个因素</span>
-            </div>
-            <div class="factor-list" id="factor-list"></div>
-          </aside>
-          <article class="panel factor-main">
-            <div id="factor-detail" class="loading">正在读取因素分组数据…</div>
-          </article>
-        </div>
-        <div class="factor-actions"><button class="text-button" id="open-pseudo" type="button">为什么下半场表现和纪律因素没入选？ ↗</button></div>
-      </section>
+<article class="report-window" id="report-window" data-view="comparison" aria-label="研报文件预览">
+<div class="report-top"><div class="report-file">REPORT DELIVERY&nbsp; / &nbsp;STATIC ARTIFACTS</div><div class="report-control" role="tablist" aria-label="研报预览模式"><button type="button" role="tab" aria-pressed="true" data-view="comparison">MD / HTML 对照</button><button type="button" role="tab" aria-pressed="false" data-view="json">JSON 凭证</button></div></div>
+<div class="report-comparison">
+<section class="report-pane" aria-label="Markdown 研报预览"><div class="pane-label"><span>agent_report.md</span><span>MARKDOWN SOURCE</span></div><pre class="markdown-raw" id="markdown-source"></pre></section>
+<section class="report-pane" aria-label="HTML 研报预览"><div class="pane-label"><span>agent_report.html</span><span>RENDERED REPORT</span></div><div class="html-report">
+<h4 id="html-report-title">切尔西 vs 曼联</h4><div class="report-stamp" id="html-report-stamp">EPL&nbsp; / &nbsp;2026-10-31&nbsp; / &nbsp;STATIC SAMPLE</div><p id="html-report-summary">基本面主胜低于去水市场共识，差异超过既定预警阈值。</p>
+<div class="report-stat-grid"><div class="report-stat"><span>TRACK A · HOME</span><strong id="report-track-home">38.89%</strong></div><div class="report-stat"><span>MARKET · HOME</span><strong id="report-market-home">52.16%</strong></div><div class="report-stat"><span>ELO · HOME</span><strong id="report-elo-home">40.46%</strong></div></div>
+<div class="report-highlight" id="html-report-highlight">背离 <b class="mono">−13.27 pp</b> · 主让 <b class="mono">−0.75</b> · xG 差 <b class="mono">+0.10</b></div><p style="margin-top:10px">模型与市场的差异是需要复核的信息，不代表赛果或盈利保证。</p>
+</div></section>
+</div>
+<div class="json-preview"><pre id="json-report"></pre></div>
+<div class="report-foot"><span>REPORT PREVIEW&nbsp; / &nbsp;DOCUMENT-DEFINED STATIC SAMPLE</span><span>Data key: <span class="mono">SAMPLE_CHELSEA_MAN_UNITED_DATA</span></span></div>
+</article>
+</div>
+</section>
 
-      <section class="section" id="walk-forward" aria-labelledby="walk-title">
-        <div class="section-head">
-          <div>
-            <div class="section-kicker">03 / 五季测试</div>
-            <h2 id="walk-title">每季只用旧数据，预测新赛季。</h2>
-          </div>
-          <p class="section-desc">测试覆盖 2021–22 至 2025–26，共 1,900 场。每一季的模型只用此前赛季训练，再拿新赛季检验。表格列出两项概率评分和实际命中率。</p>
-        </div>
-        <article class="panel compare-panel">
-          <div class="compare-head">
-            <span class="panel-label">每季 380 场 · 概率评分越低越好</span>
-            <div class="compare-legend" aria-label="模型颜色说明">
-              <span><i class="legend-swatch"></i>Elo 参考模型</span>
-              <span><i class="legend-swatch legend-track-a"></i>基本面模型</span>
-              <span><i class="legend-swatch legend-track-m"></i>结合初盘模型</span>
-            </div>
-          </div>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr><th>赛季</th><th>场次</th><th>Elo · Log Loss / Brier / 命中率</th><th>基本面 · Log Loss / Brier / 命中率</th><th>含初盘 · Log Loss / Brier / 命中率</th><th>基本面评分变化</th></tr>
-              </thead>
-              <tbody id="season-table"><tr><td colspan="6" class="loading">正在读取各赛季结果…</td></tr></tbody>
-            </table>
-          </div>
-          <div class="compare-note">
-            <span>五个赛季里，基本面模型的 Log Loss 和 Brier 评分都低于 Elo 参考模型。</span>
-            <span>这两项用来衡量预测概率是否贴近赛果；命中率也单独列出。</span>
-          </div>
-        </article>
-      </section>
+<section class="section" id="open-source">
+<div class="section-head"><div class="section-head-main"><div class="section-kicker"><b>03 /</b> OPEN-SOURCE &amp; GETTING STARTED</div><h2 class="section-title">把研究流程带回本地。</h2><p class="section-copy">可复现、离线可运行的研究框架。配置实时盘口密钥是可选步骤；没有密钥时仍可使用 Track A 基本面分析。</p></div><div class="section-aside">PYTHON&nbsp; / &nbsp;LOCAL-FIRST&nbsp; / &nbsp;MIT</div></div>
+<div class="developer-grid">
+<article class="code-card glass"><div class="code-head"><strong>3 steps · run a match analysis</strong><button type="button" class="copy-button" id="copy-command">复制命令 <span aria-hidden="true">⧉</span></button></div>
+<pre class="code-block"><code id="install-code">git clone https://github.com/kenNethhao8/MatchQuant.git
+cd MatchQuant &amp;&amp; pip install -e .
 
-      <section class="section" id="paper-book" aria-labelledby="paper-title">
-        <div class="section-head">
-          <div>
-            <div class="section-kicker">04 / 资金模拟</div>
-            <h2 id="paper-title">把赔率成本算进去，资金会怎样变化？</h2>
-          </div>
-          <p class="section-desc">用五个赛季的开盘赔率做历史模拟。模型估算的优势至少达到 2% 才下注；下注额按凯利方法建议金额的 20% 计算，每笔最高不超过当前资金的 3%。图中对比去掉赔率抽成和保留开盘抽成后的结果。</p>
-        </div>
-        <div class="kelly-layout">
-          <article class="panel equity-panel">
-            <div class="equity-top">
-              <span class="panel-label">模拟资金变化 · 2021–22 至 2025–26</span>
-              <div class="equity-legend"><span><i class="line-swatch"></i>去掉赔率抽成</span><span><i class="line-swatch raw"></i>开盘赔率（含抽成）</span></div>
-            </div>
-            <svg class="equity-chart" id="equity-chart" viewBox="0 0 760 260" role="img" aria-label="0.20倍凯利纸盘资金曲线"></svg>
-          </article>
-          <aside class="kelly-stats">
-            <article class="panel kelly-config">
-              <div class="panel-label">模拟规则</div>
-              <div id="kelly-config"></div>
-            </article>
-            <article class="equity-stat fair">
-              <div class="stat-label">去掉赔率抽成 · 最终资金</div>
-              <strong id="fair-final">—</strong>
-              <div class="stat-detail"><span id="fair-return">—</span><span id="fair-roi">—</span></div>
-              <div class="stat-detail"><span>最大资金回撤</span><span id="fair-dd">—</span></div>
-            </article>
-            <article class="equity-stat raw">
-              <div class="stat-label">开盘赔率含抽成 · 最终资金</div>
-              <strong id="raw-final">—</strong>
-              <div class="stat-detail"><span id="raw-return">—</span><span id="raw-roi">—</span></div>
-              <div class="stat-detail"><span>最大资金回撤</span><span id="raw-dd">—</span></div>
-            </article>
-            <p class="risk-note" id="kelly-note"></p>
-          </aside>
-        </div>
-      </section>
+# Optional: configure your odds API key
+export THE_ODDS_API_KEY="your_api_key_here"
 
-      <aside class="research-note">
-        <strong>说明：</strong>这里展示的是截至 2025–26 赛季的历史测试和模拟，不提供实时预测或投注服务，也不代表未来收益。CLV 用来比较模型选中的赔率和临近开赛时的赔率，跟比赛是否命中无关。按开盘赔率（含抽成）模拟的结果低于本金；去掉抽成的曲线没有计入真实赔率成本。
-      </aside>
+python -m matchquant agent-adapter --request '{"action":"analyze","home":"切尔西","away":"曼联","date":"2026-10-31","use_live_odds":true}'</code></pre>
+<p class="code-note">数据同步与实时赔率请求由用户显式发起；本 Showcase 不联网、不读取密钥，也不会在浏览器中生成预测。</p></article>
+<article class="trust-card glass"><div><h3>研究框架，不是投注产品。</h3><p>报告保留模型、市场与基准的差异，并明确展示研究边界。112 项自动化检查的通过记录来自项目交付文档。</p>
+<div class="trust-badges"><span class="trust-badge">MIT LICENSE</span><span class="trust-badge">PYTHON 3.14</span><span class="trust-badge good">112 CHECKS · 100% PASS</span><span class="trust-badge">TRACK A · ODDS-ISOLATED</span></div></div>
+<a class="repo-link" href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noreferrer">查看 MatchQuant 开源代码 <span>↗</span></a></article>
+</div>
+</section>
 
-      <footer class="site-footer">
-        <div class="footer-brand">
-          <svg class="footer-mark" viewBox="0 0 52 32" role="img" aria-label="MatchQuant mark"><path d="M4 5 12 27M20 5 28 27M36 5 44 27"></path></svg>
-          <p class="footer-copy">MatchQuant 在本地整理英超数据、计算赛果概率，并保留研究记录，方便复查。这里展示的是历史比赛和模型表现，完整项目可以在 GitHub 查看。</p>
-        </div>
-        <div class="footer-links">
-          <span class="panel-label">项目代码与说明</span>
-          <a href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noopener noreferrer">GitHub · MatchQuant V1 ↗</a>
-          <a href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noopener noreferrer">安装方法与研究说明 ↗</a>
-        </div>
-      </footer>
-      <div class="footer-bottom"><span>© MatchQuant Research · 2026</span><span>历史数据截至 <span id="footer-cutoff">2026-05-24</span></span></div>
-    </div>
-  </main>
-
-  <dialog id="pseudo-dialog" aria-labelledby="pseudo-title">
-    <div class="modal-inner">
-      <div class="modal-head">
-        <div><div class="section-kicker">比赛因素 / 未入选的信号</div><h3 id="pseudo-title">看起来相关，还要确认它有没有额外用处。</h3></div>
-        <button class="modal-close" id="close-pseudo" type="button" aria-label="关闭弹窗">×</button>
-      </div>
-      <p class="modal-copy">我们先看一个因素和净胜球是否一起变化，再扣除 Elo 实力评分的影响，检查它还能不能提供额外信息。只有额外信息达到筛选门槛（|t| ≥ 1.20）的因素才会入选；没有达到的，可能只是重复反映了球队实力。</p>
-      <div class="pseudo-grid" id="rejected-grid"></div>
-      <p class="modal-foot">这些数字来自 3,370 场历史比赛、9 个赛季。t 值只用于筛选这批历史数据，不能说明未来一定有效。</p>
-    </div>
-  </dialog>
-
-  <script>
-    (() => {
-      const number = (value, digits = 3) => Number(value).toFixed(digits);
-      const money = (value) => '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const percent = (value, digits = 1) => (Number(value) * 100).toFixed(digits) + '%';
-      const signed = (value, digits = 2) => `${Number(value) >= 0 ? '+' : '−'}${Math.abs(Number(value)).toFixed(digits)}`;
-      const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-      const factorLabels = {
-        elo_diff: '两队实力差（Elo）', elo_abs_gap: 'Elo 评分差距', expected_tempo: '预期比赛节奏',
-        sot_dominance_diff: '近期射正次数差', corner_pressure_diff: '近期角球次数差', venue_specialist_diff: '主客场表现差',
-        first_half_edge_diff: '上半场表现差', sot_momentum_diff: '射正表现变化', style_counter_edge: '比赛风格是否相克',
-        points_vs_dominance_gap: '积分与场面表现差距', promoted_coldstart_diff: '升班马前十轮表现', finishing_luck_diff: '射正转化率偏差'
-      };
-      const factorExplanations = {
-        elo_diff:'把主场优势和升班马情况也算进去后的 Elo 实力差。',
-        elo_abs_gap:'比较两队 Elo 评分相差多少；分差越小，平局可能性通常越高。',
-        expected_tempo:'根据两队预期射正和预期进球，估算比赛节奏。节奏较慢时，平局概率通常更高。',
-        sot_dominance_diff:'按对手强弱调整后，比较双方近期射正次数，作为进攻机会的参考。',
-        corner_pressure_diff:'按对手强弱调整后，比较双方近期角球次数，看看哪方更常把对手压在禁区附近。',
-        venue_specialist_diff:'比较主队近期主场和客队近期客场的净胜球表现。',
-        first_half_edge_diff:'比较双方近期上半场的净胜球，反映开局表现。',
-        sot_momentum_diff:'比较近期和稍长一段时间的射正表现，看看进攻是在升温还是降温。',
-        style_counter_edge:'结合双方的角球压迫和防守纪律数据，估算两种比赛风格是否相克。',
-        points_vs_dominance_gap:'比较近期实际拿分率和射正表现对应的拿分水平，找出积分与场面表现不一致的情况。',
-        promoted_coldstart_diff:'针对升班马赛季前 10 轮调整的指标，帮助处理升班初期的数据波动。',
-        finishing_luck_diff:'比较近期射正转化率是否偏高或偏低，提示进球表现可能受临门一脚影响。'
-      };
-      const factorFamilyLabels = {strength:'球队实力',dominance:'比赛表现',luck_reversion:'积分与表现差距',rhythm_discipline:'比赛节奏',context_market:'赛季背景'};
-      const rejectedExplanations = {
-        second_half_surge_diff:'比较双方近期下半场的净胜球表现。扣除球队实力后，这项因素没有达到入选门槛。',
-        discipline_risk_diff:'根据近期黄牌、红牌和犯规情况计算纪律风险。扣除球队实力后，这项因素没有达到入选门槛。'
-      };
-      let data;
-
-      function buildProbabilityRow(label, code, values) {
-        const home = Number(values.H), draw = Number(values.D), away = Number(values.A);
-        return `<div class="model-row"><div class="model-name">${esc(label)}<small>${esc(code)}</small></div><div class="prob-wrap"><div class="prob-bar" role="img" aria-label="${esc(label)} 主胜 ${percent(home)}，平局 ${percent(draw)}，客胜 ${percent(away)}"><i class="prob-seg prob-home" style="width:${home*100}%"></i><i class="prob-seg prob-draw" style="width:${draw*100}%"></i><i class="prob-seg prob-away" style="width:${away*100}%"></i></div><div class="prob-labels"><span class="home-val">主胜 ${percent(home)}</span><span>平局 ${percent(draw)}</span><span class="away-val">客胜 ${percent(away)}</span></div></div></div>`;
-      }
-
-      function renderMatch(index) {
-        const match = data.matchday[index];
-        const actual = match.actual_score.split(' ')[0];
-        document.getElementById('radar-content').innerHTML = `
-          <div class="fixture-line"><div class="fixture-teams"><span class="fixture-team">${esc(match.home_team)}</span><span class="fixture-vs">VS</span><span class="fixture-team">${esc(match.away_team)}</span></div><div class="score-pill">${esc(actual)}<span>终场比分</span></div></div>
-          <div class="model-rows">
-            ${buildProbabilityRow('Elo 参考模型','球队实力评分',match.elo)}
-            ${buildProbabilityRow('基本面模型','只看球队数据',match.track_a)}
-            ${buildProbabilityRow('结合初盘模型','参考开盘赔率',match.track_m_open)}
-          </div>
-          <div class="radar-foot"><span><i class="legend-dot" style="background:#ff8a73"></i>主胜</span><span><i class="legend-dot" style="background:#747b87"></i>平局</span><span><i class="legend-dot" style="background:#8a9cff"></i>客胜</span><span>加入比赛因素后，主胜概率变化 ${signed(match.alpha_shift_home_pct,1)}%</span></div>`;
-        document.getElementById('goals-content').innerHTML = `
-          <div class="xg-cell"><span>${esc(match.home_team)} · 预计进球</span><strong>${number(match.expected_home_goals,2)}</strong></div>
-          <div class="xg-cell"><span>${esc(match.away_team)} · 预计进球</span><strong>${number(match.expected_away_goals,2)}</strong></div>
-          <div class="xg-cell over"><span>总进球超过 2.5 球的概率</span><strong>${percent(match.prob_over25)}</strong></div>
-          <div class="xg-cell"><span>实际比分</span><strong>${esc(actual)}</strong></div>`;
-        const drivers = match.drivers || [];
-        document.getElementById('drivers-content').innerHTML = drivers.length ? drivers.map((driver) => {
-          const label = factorLabels[driver.factor] || driver.factor;
-          const value = Number(driver.marginal_prob_h_pct);
-          const width = Math.min(100, Math.abs(value) / 5 * 100);
-          return `<div class="driver-row"><span class="driver-title" title="${esc(driver.factor)}">${esc(label)}</span><span class="driver-value">${signed(value,2)} 个百分点</span><div class="driver-track"><div class="driver-fill" style="width:${width}%"></div></div></div>`;
-        }).join('') : '<div class="empty-state">这场比赛暂无其他因素的概率变化数据。</div>';
-      }
-
-      function renderFactor(index) {
-        const factor = data.factors[index];
-        document.querySelectorAll('.factor-choice').forEach((button, buttonIndex) => button.setAttribute('aria-pressed', buttonIndex === index ? 'true' : 'false'));
-        const monotonicity = factor.monotonicity == null ? '暂无数据' : signed(factor.monotonicity,2);
-        const chart = factor.quantiles.map((q) => {
-          const homeRate = Number(q.home_win_rate) * 100;
-          const height = Math.min(100, Math.max(4, homeRate / 80 * 100));
-          return `<div class="quantile-col"><span class="quantile-value">${homeRate.toFixed(1)}%</span><div class="quantile-bar-area"><div class="quantile-bar" style="height:${height}%" title="${esc(q.quantile)} · 主胜率 ${homeRate.toFixed(1)}%"></div></div><span class="quantile-label">${esc(q.quantile)}</span></div>`;
-        }).join('');
-        const kind = factor.status === 'selected_core' ? '基础参考项' : '额外信息项';
-        document.getElementById('factor-detail').innerHTML = `
-          <div class="factor-topline"><div><div class="panel-label">${esc(kind)} · ${esc(factorFamilyLabels[factor.family] || factor.family)}</div><h3 class="factor-title">${esc(factorLabels[factor.name] || factor.name)}</h3><div class="factor-code">${esc(factor.name)}</div></div><div class="factor-stat"><strong>t ${signed(factor.orthogonal_tstat,2)}</strong><small>扣除 Elo 后的 t 值</small></div></div>
-          <p class="factor-desc">${esc(factorExplanations[factor.name] || factor.description)}</p>
-          <div class="quantile-chart" role="img" aria-label="${esc(factor.name)} 的 Q1 到 Q5 主胜率分层图">${chart}<div class="chart-axis"><span>0%</span><span>20%</span><span>40%</span><span>60%</span><span>80%</span></div></div>
-          <div class="factor-foot"><span>Q1 到 Q5 各组主胜率 · <strong>${esc(data.snapshot.factor_lab_matches.toLocaleString('en-US'))} 场</strong></span><span>与净胜球相关度 <span class="alpha-value">${signed(factor.raw_ic_gd,3)}</span> · 五组走势 <span class="alpha-value">${monotonicity}</span></span></div>`;
-      }
-
-      function renderSeasons() {
-        document.getElementById('season-table').innerHTML = data.walk_forward.seasons.map((row) => {
-          const format = (model) => `${number(model.log_loss)} / ${number(model.brier_score)} / ${(model.accuracy*100).toFixed(1)}%`;
-          const delta = row.track_a.log_loss - row.elo.log_loss;
-          return `<tr><td class="season-cell">${esc(row.season)}</td><td>${row.matches}</td><td class="model-cell">${format(row.elo)}</td><td class="model-cell track-a">${format(row.track_a)}</td><td class="model-cell track-m">${format(row.track_m_open)}</td><td class="delta-good">${signed(delta,4)}</td></tr>`;
-        }).join('');
-      }
-
-      function renderEquity() {
-        const curve = data.kelly.equity_curve;
-        const svg = document.getElementById('equity-chart');
-        if (!curve.length) { svg.innerHTML = '<text x="24" y="80">这段历史里没有模拟下注记录。</text>'; return; }
-        const width = 760, height = 260, left = 58, right = 14, top = 18, bottom = 29;
-        const values = curve.flatMap((point) => [Number(point.fair), Number(point.raw)]);
-        const low = Math.floor((Math.min(...values) - 40) / 100) * 100;
-        const high = Math.ceil((Math.max(...values) + 40) / 100) * 100;
-        const chartWidth = width-left-right, chartHeight = height-top-bottom;
-        const x = (index) => left + index / Math.max(1, curve.length-1) * chartWidth;
-        const y = (value) => top + (high-value) / Math.max(1,high-low) * chartHeight;
-        const line = (key) => curve.map((point,index) => `${index?'L':'M'}${x(index).toFixed(2)},${y(Number(point[key])).toFixed(2)}`).join(' ');
-        const ticks = [];
-        for(let tick=low;tick<=high;tick+=Math.max(100,Math.ceil((high-low)/5/100)*100)){
-          const yy=y(tick);
-          ticks.push(`<line class="gridline" x1="${left}" x2="${width-right}" y1="${yy}" y2="${yy}"/><text x="${left-9}" y="${yy+3}" text-anchor="end">$${tick.toLocaleString('en-US')}</text>`);
-        }
-        const startY=y(Number(data.kelly.initial_bankroll));
-        const first=curve[0].date,last=curve[curve.length-1].date;
-        svg.innerHTML = `${ticks.join('')}<line class="start-line" x1="${left}" x2="${width-right}" y1="${startY}" y2="${startY}"/><line class="axisline" x1="${left}" x2="${width-right}" y1="${height-bottom}" y2="${height-bottom}"/><path class="fair-line" d="${line('fair')}"/><path class="raw-line" d="${line('raw')}"/><text x="${left}" y="${height-7}" text-anchor="start">${esc(first)}</text><text x="${width-right}" y="${height-7}" text-anchor="end">${esc(last)}</text>`;
-        const fair=data.kelly.fair_odds,raw=data.kelly.raw_odds,initial=Number(data.kelly.initial_bankroll);
-        document.getElementById('fair-final').textContent=money(fair.final_bankroll);
-        document.getElementById('fair-return').textContent=`资金变化 ${signed((fair.final_bankroll/initial-1)*100,2)}%`;
-        document.getElementById('fair-roi').textContent=`按下注总额计算 ${signed(fair.roi_pct,2)}%`;
-        document.getElementById('fair-dd').textContent=`${Number(fair.max_drawdown_pct).toFixed(1)}%`;
-        document.getElementById('raw-final').textContent=money(raw.final_bankroll);
-        document.getElementById('raw-return').textContent=`资金变化 ${signed((raw.final_bankroll/initial-1)*100,2)}%`;
-        document.getElementById('raw-roi').textContent=`按下注总额计算 ${signed(raw.roi_pct,2)}%`;
-        document.getElementById('raw-dd').textContent=`${Number(raw.max_drawdown_pct).toFixed(1)}%`;
-        document.getElementById('kelly-config').innerHTML=`<div class="config-row"><span>每笔下注占凯利建议</span><strong>${Number(data.kelly.kelly_fraction).toFixed(2)}×</strong></div><div class="config-row"><span>模型优势至少达到</span><strong>${(data.kelly.minimum_edge*100).toFixed(0)}%</strong></div><div class="config-row"><span>单笔资金上限</span><strong>${(data.kelly.max_bet_pct*100).toFixed(0)}%</strong></div><div class="config-row"><span>模拟下注次数</span><strong>${data.kelly.n_bets}</strong></div><div class="config-row"><span>CLV 为正的记录</span><strong>${Number(data.kelly.clv_win_rate_pct).toFixed(2)}%</strong></div>`;
-        document.getElementById('kelly-note').textContent='去掉赔率抽成时，模拟期末资金高于本金；按含抽成的开盘赔率回放时，期末资金低于本金。两条都是历史模拟，没有计入真实成交、流动性和滑点。';
-      }
-
-      function renderRejected() {
-        const labels={second_half_surge_diff:'下半场净胜球表现',discipline_risk_diff:'黄牌、红牌和犯规'};
-        document.getElementById('rejected-grid').innerHTML=data.rejected_examples.map((factor)=>`<article class="pseudo-card"><h4>${esc(labels[factor.name]||factor.name)}</h4><p>${esc(rejectedExplanations[factor.name]||factor.description)}<br><span class="mono">${esc(factor.name)}</span></p><div class="pseudo-metrics"><div><span>与净胜球的相关度</span><strong>${signed(factor.raw_ic_gd,3)}</strong></div><div><span>扣掉球队实力后的 t 值</span><strong>${signed(factor.orthogonal_tstat,2)}</strong></div></div></article>`).join('');
-      }
-
-      function render(dataValue) {
-        data=dataValue;
-        document.getElementById('matchday-date').textContent=data.snapshot.last_match_date;
-        document.getElementById('footer-cutoff').textContent=data.snapshot.last_match_date;
-        const select=document.getElementById('fixture-select');
-        select.innerHTML=data.matchday.map((match,index)=>`<option value="${index}">${esc(match.home_team)} vs ${esc(match.away_team)}</option>`).join('');
-        const preferred=data.matchday.findIndex((match)=>match.home_team==='Man City'&&match.away_team==='Aston Villa');
-        if(preferred>=0)select.value=String(preferred);
-        renderMatch(Number(select.value||0));
-        select.addEventListener('change',()=>renderMatch(Number(select.value)));
-
-        document.getElementById('factor-count').textContent=`${data.factors.length} 个因素`;
-        document.getElementById('factor-list').innerHTML=data.factors.map((factor,index)=>`<button class="factor-choice" type="button" aria-pressed="${index===0?'true':'false'}"><span>${esc(factorLabels[factor.name]||factor.name)}</span><small>${esc(factorFamilyLabels[factor.family]||factor.family)} · ${esc(factor.status==='selected_core'?'基础项':'额外信息')}</small></button>`).join('');
-        document.querySelectorAll('.factor-choice').forEach((button,index)=>button.addEventListener('click',()=>renderFactor(index)));
-        renderFactor(0);
-        renderSeasons();
-        renderEquity();
-        renderRejected();
-        const card=document.querySelector('.hero-card');
-        const video=document.querySelector('.hero-video');
-        if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
-          video.addEventListener('loadeddata',()=>card.classList.add('video-ready'),{once:true});
-          video.addEventListener('error',()=>card.classList.remove('video-ready'),{once:true});
-          if(video.readyState>=HTMLMediaElement.HAVE_CURRENT_DATA)card.classList.add('video-ready');
-        }
-      }
-
-      const dialog=document.getElementById('pseudo-dialog');
-      document.getElementById('open-pseudo').addEventListener('click',()=>dialog.showModal());
-      document.getElementById('close-pseudo').addEventListener('click',()=>dialog.close());
-      dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close()});
-
-      fetch('./data/showcase-data.json',{cache:'no-store'})
-        .then((response)=>{if(!response.ok)throw new Error(`Research data unavailable (${response.status})`);return response.json()})
-        .then(render)
-        .catch((error)=>{
-          document.querySelector('.page').innerHTML=`<div class="load-error"><strong>暂时无法读取研究数据。</strong><br>${esc(error.message)}<br>请启动本地静态服务器，并确认 dist/data/showcase-data.json 已生成。</div>`;
-        });
-    })();
-  </script>
+<footer class="footer"><div class="footer-main">
+<div><div class="footer-brand-row"><span class="footer-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="footer-brand-name">MATCHQUANT RESEARCH</span></div><p class="footer-summary">用量化定价视角研究英超赛事概率：区分球队基本面、动态 Elo 与市场隐含共识，留下可追溯的数据、证据与模型边界。</p></div>
+<div class="footer-links"><div class="footer-column"><h4>PROJECT</h4><a href="https://github.com/kenNethhao8/MatchQuant" target="_blank" rel="noreferrer">GitHub Repository ↗</a><a href="https://github.com/kenNethhao8/MatchQuant/blob/main/README.md" target="_blank" rel="noreferrer">Methodology &amp; Setup ↗</a></div><div class="footer-column"><h4>RESEARCH SCOPE</h4><p>体育量化投资与博彩市场定价效率学术研究参考。</p><p>页面案例为静态样例，不构成投注建议。</p></div></div>
+</div><div class="footer-bottom"><span>© MatchQuant Research · <span class="mono">2026</span> · MIT License</span><span><strong>For research purposes only.</strong>&nbsp; No betting advice.</span></div></footer>
+</main>
+</div>
+<script>
+/* Static display contract copied from section 3 of the official MatchQuant v2 guide. */
+const SAMPLE_CHELSEA_MAN_UNITED_DATA={
+  fixture: {
+    home: "Chelsea",
+    away: "Man United",
+    date: "2026-10-31",
+    season: "2026-27"
+  },
+  predictions: {
+    track_a: { home: 0.3889, draw: 0.2682, away: 0.3429 },
+    elo: { home: 0.4046, draw: 0.2444, away: 0.3510 },
+    expected_goals: { home: 1.41, away: 1.31, over_2_5_prob: 0.518 }
+  },
+  market: {
+    bookmaker: "The Odds API (888sport)",
+    odds: { home: 1.83, draw: 3.75, away: 3.80 },
+    devigged_probabilities: { home: 0.5216, draw: 0.2409, away: 0.2375 },
+    spread_ah: -0.75,
+    value_edges: { home: -0.3518, draw: 0.0104, away: 0.4300 },
+    divergence: {
+      is_divergent: true,
+      threshold: 8.0,
+      diff_percentage_points: { home: -13.27, draw: 2.73, away: 10.54 }
+    },
+    timeline_snapshots: [
+      { time: "02:17Z", home_odds: 1.83, away_odds: 3.80, home_prob: 0.5216 },
+      { time: "02:23Z", home_odds: 1.83, away_odds: 3.80, home_prob: 0.5216 },
+      { time: "02:47Z", home_odds: 1.83, away_odds: 3.80, home_prob: 0.5216 },
+      { time: "02:49Z", home_odds: 1.83, away_odds: 3.80, home_prob: 0.5216 }
+    ]
+  }
+};
+(function(){
+const data=SAMPLE_CHELSEA_MAN_UNITED_DATA,keys=["home","draw","away"],labels=["HOME WIN","DRAW","AWAY WIN"];
+const models=[{key:"track_a",color:"#ff8a73"},{key:"market",color:"#ffc47a"},{key:"elo",color:"#80bfff"}];
+const values=function(model){return model.key==="market"?data.market.devigged_probabilities:data.predictions[model.key]};
+function renderProbabilityChart(){
+const svg=document.getElementById("probability-chart"),top=26,bottom=226,plotHeight=bottom-top;let out="";
+[0,20,40,60].forEach(function(t){const y=bottom-t/60*plotHeight;out+='<line class="'+(t?"svg-grid":"svg-baseline")+'" x1="58" x2="680" y1="'+y+'" y2="'+y+'"></line><text class="svg-small" x="48" y="'+(y+3)+'" text-anchor="end">'+t+'%</text>'});
+const centers=[163,369,575];keys.forEach(function(key,k){models.forEach(function(model,m){const v=values(model)[key],h=v*100/60*plotHeight,x=centers[k]-50+m*37,y=bottom-h;out+='<rect x="'+x+'" y="'+y.toFixed(2)+'" width="28" height="'+h.toFixed(2)+'" rx="4" fill="'+model.color+'" fill-opacity="'+(m===1?".92":".82")+'"></rect><text class="svg-value" x="'+(x+14)+'" y="'+(y-6).toFixed(2)+'" text-anchor="middle">'+percent(v,1).replace("%","")+'</text>'});out+='<text class="svg-label" x="'+centers[k]+'" y="249" text-anchor="middle">'+labels[k]+'</text>'});
+out+='<text class="svg-small" x="680" y="267" text-anchor="end">P(OUTCOME) · %</text>';svg.innerHTML=out
+}
+function renderTimeline(){
+const svg=document.getElementById("timeline-chart"),src=data.market.timeline_snapshots,pick=[0,1,1,1,1,2,3],known={0:src[0].time,1:src[1].time,5:src[2].time,6:src[3].time};
+const points=pick.map(function(si,i){return{q:src[si],time:known[i]||("S"+(i+1)),known:Object.prototype.hasOwnProperty.call(known,i)}});
+const left=52,right=704,top=25,bottom=196,xAt=function(i){return left+i*(right-left)/(points.length-1)},yOdds=function(v){return top+(4.2-v)/(4.2-1.5)*(bottom-top)},yProb=function(v){return top+(.60-v)/(.60-.45)*(bottom-top)};
+const series=[
+{key:"home",color:"#ff8a73",scale:yOdds,get:function(q){return q.home_odds}},
+{key:"draw",color:"#ffc47a",scale:yOdds,get:function(){return data.market.odds.draw}},
+{key:"away",color:"#80bfff",scale:yOdds,get:function(q){return q.away_odds}},
+{key:"fair",color:"#8cdeb6",scale:yProb,get:function(q){return q.home_prob}}
+];let out="";
+[4,3,2].forEach(function(t){const y=yOdds(t);out+='<line class="svg-grid" x1="'+left+'" x2="'+right+'" y1="'+y.toFixed(2)+'" y2="'+y.toFixed(2)+'"></line><text class="svg-small" x="'+(left-10)+'" y="'+(y+3).toFixed(2)+'" text-anchor="end">'+t.toFixed(1)+'</text>'});
+[.60,.525,.45].forEach(function(t){const y=yProb(t);out+='<text class="svg-small" x="'+(right+10)+'" y="'+(y+3).toFixed(2)+'">'+(t*100).toFixed(0)+'%</text>'});
+series.forEach(function(s){const c=points.map(function(p,i){return{x:xAt(i),y:s.scale(s.get(p.q))}}),path=c.map(function(p,i){return(i?"L":"M")+p.x.toFixed(2)+","+p.y.toFixed(2)}).join(" ");out+='<path d="'+path+'" fill="none" stroke="'+s.color+'" stroke-width="'+(s.key==="home"?"2.1":"1.35")+'" stroke-linecap="round" opacity="'+(s.key==="fair"?".92":".78")+'"></path>';c.forEach(function(p,i){const val=s.get(points[i].q),t=points[i].known?points[i].time:"Carry-forward stable quote";out+='<circle cx="'+p.x.toFixed(2)+'" cy="'+p.y.toFixed(2)+'" r="'+(s.key==="home"?"3":"2.2")+'" fill="'+s.color+'" opacity="'+(points[i].known?".95":".48")+'"><title>'+t+" · "+s.key+": "+Number(val).toFixed(s.key==="fair"?4:2)+'</title></circle>'})});
+out+='<line class="svg-baseline" x1="'+left+'" x2="'+right+'" y1="'+bottom+'" y2="'+bottom+'"></line>';
+points.forEach(function(p,i){const x=xAt(i),label=p.known?p.time.replace("Z",""):"S"+(i+1);out+='<text class="svg-small" x="'+x.toFixed(2)+'" y="218" text-anchor="middle">'+label+'</text><text class="svg-small" x="'+x.toFixed(2)+'" y="233" text-anchor="middle">'+(p.known?"UTC":"HOLD")+'</text>'});
+out+='<text class="svg-small" x="'+left+'" y="13">ODDS</text><text class="svg-small" x="'+right+'" y="13" text-anchor="end">HOME FAIR PROBABILITY</text>';svg.innerHTML=out
+}
+function percent(value,digits){const places=Math.pow(10,digits===undefined?1:digits),scaled=Number(value)*100*places;return(Math.floor(scaled+.499999999)/places).toFixed(digits===undefined?1:digits)+"%"}
+function signed(value,digits){return(value>=0?"+":"−")+Math.abs(Number(value)).toFixed(digits===undefined?2:digits)}
+function setText(id,value){document.getElementById(id).textContent=value}
+function populateData(){
+const f=data.fixture,p=data.predictions,m=data.market,d=m.divergence.diff_percentage_points,x=p.expected_goals,homeZh=f.home==="Chelsea"?"切尔西":f.home,awayZh=f.away==="Man United"?"曼联":f.away;
+const dateLabel=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(f.date+"T00:00:00Z")).toUpperCase();
+setText("hero-fixture","标杆案例 · "+f.home+" vs "+f.away+" · "+f.date);setText("home-team",f.home);setText("away-team",f.away);setText("fixture-date",dateLabel);
+setText("home-outcome",f.home+" win");setText("away-outcome",f.away+" win");
+setText("divergence-threshold",m.divergence.threshold.toFixed(1));document.getElementById("divergence-home").innerHTML=signed(d.home,1)+"<small> pp</small>";
+setText("home-diff",signed(d.home,1)+" pp");setText("away-diff",signed(d.away,1)+" pp");
+document.getElementById("divergence-summary").innerHTML=homeZh+"主胜：Track A <span class=\"mono\">"+percent(p.track_a.home)+"</span> 对市场 <span class=\"mono\">"+percent(m.devigged_probabilities.home)+"</span>。市场价格体现更强的主队倾向，差异超过 <span class=\"mono\">"+m.divergence.threshold.toFixed(1)+" pp</span> 预警阈值。";
+setText("odds-home",m.odds.home.toFixed(2));setText("odds-draw",m.odds.draw.toFixed(2));setText("odds-away",m.odds.away.toFixed(2));
+setText("market-prob-home",percent(m.devigged_probabilities.home));setText("market-prob-draw",percent(m.devigged_probabilities.draw));setText("market-prob-away",percent(m.devigged_probabilities.away));
+[["edge-home",m.value_edges.home],["edge-draw",m.value_edges.draw],["edge-away",m.value_edges.away]].forEach(function(pair){const el=document.getElementById(pair[0]);el.textContent=signed(pair[1]*100,2)+"%";el.classList.toggle("negative",pair[1]<0);el.classList.toggle("positive",pair[1]>=0)});
+const xgDiff=x.home-x.away,spread=signed(m.spread_ah,2);
+setText("xg-market",x.home.toFixed(2)+" : "+x.away.toFixed(2));setText("spread-ah",spread);
+document.getElementById("chart-xg-note").innerHTML="预期进球 <strong class=\"mono\">"+x.home.toFixed(2)+" : "+x.away.toFixed(2)+"</strong>&nbsp; / &nbsp;净差 <strong class=\"mono\">"+signed(xgDiff,2)+"</strong>";
+setText("timeline-range",m.timeline_snapshots[0].time+" — "+m.timeline_snapshots[m.timeline_snapshots.length-1].time);setText("timeline-count","7");
+document.getElementById("timeline-summary").innerHTML="<strong>报价维持在 <span class=\"mono\">"+m.odds.home.toFixed(2)+" / "+m.odds.draw.toFixed(2)+" / "+m.odds.away.toFixed(2)+"</span>，主胜去水概率为 <span class=\"mono\">"+percent(m.devigged_probabilities.home,2)+"</span>。</strong>稳定报价显示水位未漂移，亚盘线保持主让 <span class=\"mono\">"+spread+"</span>。";
+document.getElementById("pricing-summary-note").innerHTML="定价错配：基本面预期净胜 <strong class=\"mono\">"+signed(xgDiff,2)+"</strong> 球，对位市场主让 <strong class=\"mono\">"+spread+"</strong> 球。";
+document.getElementById("initial-answer").innerHTML=formatAnswer("Track A 给"+homeZh+"主胜 "+percent(p.track_a.home,2)+"，去水市场为 "+percent(m.devigged_probabilities.home,2)+"，相差 "+signed(d.home,2)+" pp。市场亚盘主让 "+spread+"，而基本面预期净胜仅 "+signed(xgDiff,2)+" 球。差异提示两套定价假设不同；这份静态样例不包含盘口之外的临场证据。");
+const reportTitle=homeZh+" vs "+awayZh;
+setText("html-report-title",reportTitle);setText("html-report-stamp","EPL / "+f.season+" / "+f.date+" / STATIC SAMPLE");
+setText("report-track-home",percent(p.track_a.home,2));setText("report-market-home",percent(m.devigged_probabilities.home,2));setText("report-elo-home",percent(p.elo.home,2));
+setText("html-report-summary","基本面主胜 "+percent(p.track_a.home,2)+"，低于去水市场共识 "+percent(m.devigged_probabilities.home,2)+"；差异超过既定预警阈值。");
+document.getElementById("html-report-highlight").innerHTML="背离 <b class=\"mono\">"+signed(d.home,2)+" pp</b> · 主让 <b class=\"mono\">"+spread+"</b> · xG 差 <b class=\"mono\">"+signed(xgDiff,2)+"</b>";
+document.getElementById("markdown-source").textContent="# "+f.home+" vs "+f.away+"\n## 01 · Pricing summary\nTrack A 主胜："+percent(p.track_a.home,2)+"\nMarket 去水："+percent(m.devigged_probabilities.home,2)+"\nElo 基线："+percent(p.elo.home,2)+"\n\n## 02 · Divergence\n主胜偏离："+signed(d.home,2)+" pp\n客胜偏离："+signed(d.away,2)+" pp\n亚盘：主让 "+spread+"\n\n## 03 · Evidence & boundary\n预期进球："+x.home.toFixed(2)+" : "+x.away.toFixed(2)+"\n7 节点稳定报价观察\n静态演示 · 无重算";
+}
+function answerFor(q){
+const lower=q.toLowerCase(),eg=data.predictions.expected_goals,market=data.market;
+if(q.indexOf("进球")>=0||q.indexOf("让球")>=0||lower.indexOf("xg")>=0)return"Track A 预期进球为 Chelsea "+eg.home.toFixed(2)+"、Man United "+eg.away.toFixed(2)+"，净差 "+(eg.home-eg.away).toFixed(2)+" 球；样例市场主让 "+market.spread_ah.toFixed(2)+"。两者存在明显定价落差，但静态样例不能解释市场背后的临场原因。";
+if(q.indexOf("为什么")>=0||q.indexOf("盘口")>=0||lower.indexOf("market")>=0)return"Market 去水主胜 "+(market.devigged_probabilities.home*100).toFixed(2)+"%，Track A 主胜 "+(data.predictions.track_a.home*100).toFixed(2)+"%，基本面低 "+Math.abs(market.divergence.diff_percentage_points.home).toFixed(2)+" pp。市场与模型使用不同信息集；当前静态样例没有伤停或首发数据，不能据此归因于具体事件。";
+return"这份静态报告将基本面、市场去水概率与 Elo 基准分开呈现。Chelsea 主胜分别为 "+(data.predictions.track_a.home*100).toFixed(2)+"%、"+(market.devigged_probabilities.home*100).toFixed(2)+"% 和 "+(data.predictions.elo.home*100).toFixed(2)+"%；追问基于已加载的 E5_MARKET 证据，不执行重算。"
+}
+function escapeHTML(value){return String(value).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+function formatAnswer(value){return escapeHTML(value).replace(/([+\-−]?\d+(?:\.\d+)?(?:%|\s*pp)?)/g,function(n){return'<span class="mono">'+n+'</span>'})}
+function addMessage(role,text,isAnswer){
+const log=document.getElementById("terminal-log"),item=document.createElement("div"),roleEl=document.createElement("div"),textEl=document.createElement("div");
+item.className="message";roleEl.className="message-role"+(isAnswer?" answer-role":"");roleEl.textContent=role+" / "+(isAnswer?"STATIC EVIDENCE":"FOLLOW-UP");textEl.className="message-text"+(isAnswer?" message-answer":"");if(isAnswer)textEl.innerHTML=formatAnswer(text);else textEl.textContent=text;item.appendChild(roleEl);item.appendChild(textEl);
+if(isAnswer){const tags=document.createElement("div");tags.className="evidence-tags";tags.innerHTML='<span class="evidence-tag">E5_MARKET</span><span class="evidence-tag">NO RECALC</span><span class="evidence-tag">0.005s</span>';item.appendChild(tags)}
+log.appendChild(item);log.scrollTop=log.scrollHeight
+}
+populateData();document.getElementById("json-report").textContent=JSON.stringify(SAMPLE_CHELSEA_MAN_UNITED_DATA,null,2);
+renderProbabilityChart();renderTimeline();
+const video=document.getElementById("hero-video"),card=document.getElementById("hero-card"),reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+if(reduced){video.pause();video.removeAttribute("autoplay");video.querySelectorAll("source").forEach(function(s){s.removeAttribute("src")});video.load()}
+else{video.addEventListener("loadeddata",function(){card.classList.add("video-ready")},{once:true});video.addEventListener("error",function(){card.classList.remove("video-ready")},{once:true});const p=video.play();if(p&&typeof p.catch==="function")p.catch(function(){})}
+document.getElementById("query-form").addEventListener("submit",function(e){e.preventDefault();const input=document.getElementById("query-input"),q=input.value.trim();if(!q){input.focus();return}addMessage("USER",q,false);addMessage("MATCHQUANT",answerFor(q),true);input.value=""});
+document.querySelectorAll("[data-prompt]").forEach(function(b){b.addEventListener("click",function(){const input=document.getElementById("query-input");input.value=b.getAttribute("data-prompt");document.getElementById("query-form").requestSubmit()})});
+document.querySelectorAll(".report-control button").forEach(function(b){b.addEventListener("click",function(){const view=b.getAttribute("data-view"),report=document.getElementById("report-window");report.setAttribute("data-view",view);document.querySelectorAll(".report-control button").forEach(function(t){t.setAttribute("aria-pressed",t===b?"true":"false")})})});
+document.getElementById("copy-command").addEventListener("click",async function(){const button=this,code=document.getElementById("install-code").textContent;try{await navigator.clipboard.writeText(code);button.textContent="已复制 ✓"}catch(e){const f=document.createElement("textarea");f.value=code;f.style.position="fixed";f.style.opacity="0";document.body.appendChild(f);f.select();document.execCommand("copy");f.remove();button.textContent="已复制 ✓"}window.setTimeout(function(){button.innerHTML='复制命令 <span aria-hidden="true">⧉</span>'},1800)});
+document.getElementById("menu-toggle").addEventListener("click",function(){const nav=document.getElementById("site-nav"),open=this.getAttribute("aria-expanded")==="true";this.setAttribute("aria-expanded",open?"false":"true");this.setAttribute("aria-label",open?"展开导航":"收起导航");nav.classList.toggle("open",!open)});
+document.querySelectorAll("#site-nav a").forEach(function(a){a.addEventListener("click",function(){document.getElementById("site-nav").classList.remove("open");document.getElementById("menu-toggle").setAttribute("aria-expanded","false")})});
+})();
+</script>
 </body>
 </html>
