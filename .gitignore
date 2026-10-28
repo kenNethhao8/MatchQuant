@@ -9,3 +9,6 @@ build/
 dist/
 wheelhouse/
 *.zip
+.env
+*.key
+odds_snapshots/

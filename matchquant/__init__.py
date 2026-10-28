@@ -38,6 +38,7 @@ from .fixtures import (
 from .io import file_sha256, load_matches, write_json, write_predictions
 from .metrics import evaluate_predictions
 from .models import EloModel, FrequencyModel, PoissonModel, create_model
+from .odds_provider import OddsProviderError, fetch_epl_odds, snapshot_to_market_input
 from .quant_models import (
     CalibratedFactorSystem,
     FactorDixonColesModel,
@@ -92,6 +93,7 @@ __all__ = [
     "MARKET_BENCHMARK_COLUMNS",
     "MARKET_FACTOR_COLUMNS",
     "ModelRun",
+    "OddsProviderError",
     "OrderedFactorModel",
     "POST_MATCH_PITCH_COLUMNS",
     "PRE_MATCH_METADATA_COLUMNS",
@@ -116,6 +118,7 @@ __all__ = [
     "evaluate_predictions",
     "evaluate_probs_frame",
     "explain_matches",
+    "fetch_epl_odds",
     "file_sha256",
     "fit_and_select_factor_system",
     "fit_dixon_coles_factor_model",
@@ -137,6 +140,7 @@ __all__ = [
     "run_quant_research_pipeline",
     "run_single_match_report",
     "run_walk_forward",
+    "snapshot_to_market_input",
     "source_url",
     "stable_match_id",
     "validate_fixtures",

@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -19,8 +19,9 @@ from .agent_report import (
 from .dataset import check_data_readiness, load_current_dataset_pointer
 from .epl import normalize_season
 from .io import write_json
+from .odds_provider import OddsProviderError, fetch_epl_odds, snapshot_to_market_input
 from .profile import UserProfile, diagnose_environment, load_profile
-from .single_match import SingleMatchError, run_single_match_report
+from .single_match import SingleMatchError, parse_iso_date, run_single_match_report
 from .sync import sync_epl
 
 ADAPTER_SCHEMA_VERSION = "matchquant-adapter-v1"
@@ -50,10 +51,12 @@ def execute_adapter_request(request: Mapping[str, Any]) -> dict[str, Any]:
             return _handle_analyze(request, prof, base_response)
         elif action == "followup":
             return _handle_followup(request, prof, base_response)
+        elif action == "odds":
+            return _handle_odds(request, prof, base_response)
         else:
             base_response.update(
                 status="failed",
-                error=f"unknown adapter action: {action!r}. Supported actions: setup, sync, readiness, analyze, followup",
+                error=f"unknown adapter action: {action!r}. Supported actions: setup, sync, readiness, analyze, followup, odds",
             )
             return base_response
     except Exception as exc:
@@ -84,7 +87,7 @@ def _handle_setup(
             prof.team_aliases.update({str(k): str(v) for k, v in updates["team_aliases"].items()})
         if "in_progress_season" in updates:
             prof.in_progress_season = str(updates["in_progress_season"]) if updates["in_progress_season"] else None
-        saved_path = prof.save()
+        saved_path = prof.save(request.get("profile_path"))
         response["saved_profile_path"] = str(saved_path)
 
     diag = diagnose_environment(prof)
@@ -197,16 +200,83 @@ def _handle_analyze(
             raise ValueError("could not infer season from fixture date; please specify season explicitly")
     norm_season = normalize_season(season)
 
+    user_specified_as_of = bool(request.get("as_of"))
     as_of = str(request.get("as_of") or fixture_date).strip()
     mode = str(request.get("mode", "research"))
 
+    # Live odds integration
+    use_live_odds = bool(request.get("use_live_odds", False))
+    market_input_path = request.get("market_input_path")
+    live_odds_info: dict[str, Any] | None = None
+    adapter_warnings: list[str] = []
+
+    if use_live_odds:
+        try:
+            snapshot = fetch_epl_odds(
+                home_team=home,
+                away_team=away,
+                fixture_date=fixture_date,
+                api_key=request.get("api_key"),
+                profile=prof,
+            )
+            market_input = snapshot_to_market_input(snapshot)
+            snapshot_path = Path(snapshot["snapshot_path"])
+            market_input_file = snapshot_path.parent / "market_input.json"
+            market_input_file.write_text(
+                json.dumps(market_input, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            observed_at_str = str(snapshot["observed_at"])
+            observed_date = parse_iso_date(observed_at_str, "snapshot observed_at")
+
+            if not user_specified_as_of:
+                as_of = (observed_date + timedelta(days=1)).isoformat()
+                adapter_warnings.append(
+                    f"未显式指定 as_of，为满足市场盘口 observed_at < as_of 无穿越约束，默认将 as_of 设为盘口观察日次日 ({as_of})"
+                )
+                market_input_path = str(market_input_file.resolve())
+            else:
+                as_of_date = parse_iso_date(as_of, "as_of")
+                if observed_date >= as_of_date:
+                    adapter_warnings.append(
+                        f"实时盘口观察时间 ({observed_at_str}) 不早于指定的 as_of ({as_of})，触发防穿越红线，已优雅降级为纯基本面 Track A 模式"
+                    )
+                    market_input_path = None
+                else:
+                    market_input_path = str(market_input_file.resolve())
+
+            live_odds_info = {
+                "status": "ok" if market_input_path else "downgraded",
+                "snapshot_path": snapshot.get("snapshot_path"),
+                "bookmaker": snapshot.get("bookmaker_title"),
+                "observed_at_utc": snapshot.get("observed_at_utc"),
+                "odds": {
+                    "home": snapshot.get("odds_open_h"),
+                    "draw": snapshot.get("odds_open_d"),
+                    "away": snapshot.get("odds_open_a"),
+                },
+                "mkt_ah_line": snapshot.get("mkt_ah_line"),
+            }
+        except Exception as exc:
+            adapter_warnings.append(
+                f"实时盘口获取失败: {exc}，已优雅降级为纯基本面 Track A 模式"
+            )
+            live_odds_info = {
+                "status": "failed",
+                "error": str(exc),
+                "error_type": exc.__class__.__name__,
+            }
+
     # Check readiness
     auto_refresh = bool(request.get("auto_refresh", prof.refresh_policy.auto_refresh))
+    allow_stale = bool(request.get("allow_stale_fallback", prof.refresh_policy.allow_stale_fallback))
     readiness = check_data_readiness(
         data_root=data_root,
         as_of=as_of,
         fixture_date=fixture_date,
         profile=prof,
+        allow_stale_fallback=allow_stale,
     )
 
     sync_record: dict[str, Any] | None = None
@@ -226,6 +296,7 @@ def _handle_analyze(
                 as_of=as_of,
                 fixture_date=fixture_date,
                 profile=prof,
+                allow_stale_fallback=allow_stale,
             )
 
     if not readiness["ready"]:
@@ -242,6 +313,20 @@ def _handle_analyze(
         raise FileNotFoundError(f"rich dataset not found at '{rich_csv_path}'")
 
     # Run single match prediction
+    divergence_threshold = request.get("divergence_threshold_pct_points")
+    max_data_age = request.get("max_data_age_days")
+    extra_single_match_kwargs: dict[str, Any] = {}
+    if divergence_threshold is not None:
+        try:
+            extra_single_match_kwargs["divergence_threshold_pct_points"] = float(divergence_threshold)
+        except (ValueError, TypeError):
+            pass
+    if max_data_age is not None:
+        try:
+            extra_single_match_kwargs["max_data_age_days"] = int(max_data_age)
+        except (ValueError, TypeError):
+            pass
+
     report_json, base_artifacts = run_single_match_report(
         input_path=rich_csv_path,
         as_of=as_of,
@@ -251,11 +336,14 @@ def _handle_analyze(
         away=away,
         fixture_date=fixture_date,
         season=norm_season,
-        market_input_path=request.get("market_input_path"),
+        market_input_path=market_input_path,
+        snapshot_root=report_root / "odds_snapshots",
+        **extra_single_match_kwargs,
     )
 
-    run_id = report_json.get("run_id")
     run_dir = Path(base_artifacts["json"]).parent
+    run_id = report_json.get("run_id") or run_dir.name
+    report_json["run_id"] = run_id
 
     # Render Layer 5 Agent companion narrative reports
     catalog = build_evidence_catalog(report_json)
@@ -304,13 +392,83 @@ def _handle_analyze(
             "p_away": report_json.get("predictions", {}).get("track_a", {}).get("away"),
         },
         artifacts=all_artifacts,
+        market_comparison=report_json.get("market_comparison"),
         readiness_summary={
             "dataset_version": readiness.get("dataset_version"),
             "latest_completed_match": readiness.get("latest_completed_match_date"),
             "data_age_days": readiness.get("data_age_days"),
         },
         sync_record=sync_record,
-        warnings=report_json.get("warnings", []),
+        warnings=list(report_json.get("warnings", [])) + adapter_warnings,
+    )
+    if live_odds_info is not None:
+        response["live_odds"] = live_odds_info
+    return response
+
+
+def _handle_odds(
+    request: Mapping[str, Any], prof: UserProfile, response: dict[str, Any]
+) -> dict[str, Any]:
+    """Handle standalone odds fetching and snapshot persistence."""
+    raw_home = request.get("home") or request.get("home_team")
+    raw_away = request.get("away") or request.get("away_team")
+    if not raw_home or not raw_away:
+        raise ValueError("both home and away teams are required for odds fetching")
+
+    home = prof.resolve_team_alias(str(raw_home))
+    away = prof.resolve_team_alias(str(raw_away))
+
+    fixture_date = str(request.get("date") or request.get("fixture_date") or "").strip()
+    if not fixture_date:
+        raise ValueError("fixture date is required (YYYY-MM-DD)")
+
+    api_key = request.get("api_key")
+    regions = str(request.get("regions", "uk"))
+    markets = str(request.get("markets", "h2h,spreads"))
+    output_dir = request.get("output_dir")
+
+    snapshot = fetch_epl_odds(
+        home_team=home,
+        away_team=away,
+        fixture_date=fixture_date,
+        api_key=api_key,
+        regions=regions,
+        markets=markets,
+        output_dir=output_dir,
+        profile=prof,
+    )
+
+    market_input = snapshot_to_market_input(snapshot)
+    snapshot_path = Path(snapshot["snapshot_path"])
+    market_input_file = snapshot_path.parent / "market_input.json"
+    market_input_file.write_text(
+        json.dumps(market_input, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    response.update(
+        status="ok",
+        fixture={
+            "home": home,
+            "away": away,
+            "requested_home": raw_home,
+            "requested_away": raw_away,
+            "date": fixture_date,
+        },
+        snapshot=snapshot,
+        snapshot_path=snapshot.get("snapshot_path"),
+        market_input=market_input,
+        market_input_path=str(market_input_file.resolve()),
+        summary={
+            "bookmaker": snapshot.get("bookmaker_title"),
+            "observed_at_utc": snapshot.get("observed_at_utc"),
+            "odds": {
+                "home": snapshot.get("odds_open_h"),
+                "draw": snapshot.get("odds_open_d"),
+                "away": snapshot.get("odds_open_a"),
+            },
+            "mkt_ah_line": snapshot.get("mkt_ah_line"),
+        },
     )
     return response
 
@@ -353,7 +511,7 @@ def _handle_followup(
 
     response.update(
         status="ok",
-        run_id=report_json.get("run_id"),
+        run_id=report_json.get("run_id") or Path(target_json_path).parent.name,
         question=question,
         answer=followup_res["answer"],
         referenced_evidence_ids=followup_res["referenced_evidence_ids"],

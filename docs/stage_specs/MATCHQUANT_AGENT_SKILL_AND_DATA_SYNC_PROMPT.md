@@ -1,5 +1,7 @@
 # MatchQuant: on-demand data synchronization and an Agent Skill workflow
 
+Implementation status: local commit `a020607` was rechecked on 2026-10-27 and still has not passed this stage's acceptance requirements. The supplied handover is byte-identical to the previous one; no new implementation is present in this checkout. See [the current requirement checklist](AGENT_SYNC_REQUIREMENTS_CHECKLIST_20261027.md) and [the detailed acceptance review and repair gates](AGENT_SYNC_REVIEW_20261026.md). Live remote verification was unavailable. The requirements below remain unchanged.
+
 ## Task
 
 Extend the existing MatchQuant project so that a user can configure it once, invoke a MatchQuant Skill in a host Agent, describe a fixture in natural language, and receive a Chinese match analysis grounded in freshly checked historical data and the existing MatchQuant models.

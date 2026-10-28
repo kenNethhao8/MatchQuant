@@ -736,6 +736,224 @@ def _probability_dict(values: Sequence[float]) -> dict[str, float]:
     return {"home": float(values[0]), "draw": float(values[1]), "away": float(values[2])}
 
 
+DEFAULT_DIVERGENCE_THRESHOLD_PCT_POINTS = 8.0
+
+
+def extract_market_odds_timeline(
+    fixture_id: str | None = None,
+    report_root: str | Path | None = None,
+    *,
+    fixture: Mapping[str, Any] | None = None,
+    market_input_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Scan and extract chronological odds snapshots for a single fixture (Decision Gate B).
+
+    Orders snapshots ascending by observed_at_utc and calculates steam moves / drift.
+    Never alters or enters Track A model factors.
+    """
+    candidate_keys: list[str] = []
+    if fixture_id:
+        candidate_keys.append(str(fixture_id).strip())
+    if fixture:
+        f_date = str(fixture.get("date", "")).strip()
+        f_home = str(fixture.get("home_team", "")).strip()
+        f_away = str(fixture.get("away_team", "")).strip()
+        if f_date and f_home and f_away:
+            constructed_key = f"{f_date}_{f_home}_{f_away}".replace(" ", "_")
+            if constructed_key not in candidate_keys:
+                candidate_keys.append(constructed_key)
+        f_id = str(fixture.get("fixture_id", "")).strip()
+        if f_id and f_id not in candidate_keys:
+            candidate_keys.append(f_id)
+
+    search_dirs: list[Path] = []
+    if market_input_path:
+        mip = Path(market_input_path).expanduser().resolve()
+        if mip.is_file():
+            parent = mip.parent
+            search_dirs.append(parent)
+            if parent.parent:
+                search_dirs.append(parent.parent)
+
+    if report_root:
+        rr = Path(report_root).expanduser().resolve()
+        search_dirs.append(rr / "odds_snapshots")
+        search_dirs.append(rr)
+
+    # Fallback to UserProfile configured roots
+    try:
+        from .profile import load_profile
+
+        prof = load_profile()
+        search_dirs.append(Path(prof.report_root) / "odds_snapshots")
+        search_dirs.append(Path(prof.data_root) / "odds_snapshots")
+    except Exception:
+        pass
+
+    target_dir: Path | None = None
+    for candidate_dir in search_dirs:
+        if not candidate_dir.exists():
+            continue
+        # If candidate_dir directly has snapshots matching candidate_keys or *.json
+        if candidate_dir.is_dir() and any(k in candidate_dir.name for k in candidate_keys):
+            target_dir = candidate_dir
+            break
+        # Otherwise check child subdirectories
+        for key in candidate_keys:
+            sub = candidate_dir / key
+            if sub.is_dir():
+                target_dir = sub
+                break
+        if target_dir is not None:
+            break
+
+    if target_dir is None or not target_dir.is_dir():
+        return {
+            "available": False,
+            "snapshot_count": 0,
+            "status": "no_snapshots",
+            "message": "未找到历史盘口快照。",
+            "timeline": [],
+            "drift_summary": None,
+        }
+
+    raw_snapshots: list[dict[str, Any]] = []
+    for json_file in sorted(target_dir.glob("*.json")):
+        if json_file.name == "market_input.json":
+            continue
+        try:
+            content = json.loads(json_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(content, dict):
+            continue
+        if "odds_open_h" not in content or "odds_open_d" not in content or "odds_open_a" not in content:
+            continue
+        try:
+            h = float(content["odds_open_h"])
+            d = float(content["odds_open_d"])
+            a = float(content["odds_open_a"])
+            if h <= 1.0 or d <= 1.0 or a <= 1.0:
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        obs_utc = str(content.get("observed_at_utc") or content.get("observed_at") or "")
+        p_h, p_d, p_a = devig_power_probabilities(np.array([h]), np.array([d]), np.array([a]))
+        ah_line = content.get("mkt_ah_line")
+        try:
+            ah_line_val = float(ah_line) if ah_line is not None else None
+        except (ValueError, TypeError):
+            ah_line_val = None
+
+        raw_snapshots.append(
+            {
+                "snapshot_file": json_file.name,
+                "observed_at_utc": obs_utc,
+                "observed_at": str(content.get("observed_at", obs_utc[:10])),
+                "bookmaker": str(content.get("bookmaker", "unknown")),
+                "bookmaker_title": str(content.get("bookmaker_title", content.get("bookmaker", "unknown"))),
+                "odds": {
+                    "home": round(h, 4),
+                    "draw": round(d, 4),
+                    "away": round(a, 4),
+                },
+                "devigged_probabilities": {
+                    "home": round(float(p_h[0]), 4),
+                    "draw": round(float(p_d[0]), 4),
+                    "away": round(float(p_a[0]), 4),
+                },
+                "mkt_ah_line": round(ah_line_val, 4) if ah_line_val is not None else None,
+            }
+        )
+
+    # Sort strictly by observed_at_utc ascending
+    raw_snapshots.sort(key=lambda item: (item["observed_at_utc"], item["snapshot_file"]))
+
+    if not raw_snapshots:
+        return {
+            "available": False,
+            "snapshot_count": 0,
+            "status": "no_snapshots",
+            "message": "快照目录存在，但未找到有效赔率快照。",
+            "timeline": [],
+            "drift_summary": None,
+        }
+
+    if len(raw_snapshots) == 1:
+        single = raw_snapshots[0]
+        return {
+            "available": False,
+            "snapshot_count": 1,
+            "status": "single_snapshot_baseline",
+            "message": "暂无历史变动趋势，仅提供单时点截面对照。",
+            "first_observed_utc": single["observed_at_utc"],
+            "latest_observed_utc": single["observed_at_utc"],
+            "timeline": raw_snapshots,
+            "drift_summary": None,
+        }
+
+    earliest = raw_snapshots[0]
+    latest = raw_snapshots[-1]
+
+    odds_drift = {
+        "home": round(latest["odds"]["home"] - earliest["odds"]["home"], 4),
+        "draw": round(latest["odds"]["draw"] - earliest["odds"]["draw"], 4),
+        "away": round(latest["odds"]["away"] - earliest["odds"]["away"], 4),
+    }
+
+    prob_drift = {
+        "home": round((latest["devigged_probabilities"]["home"] - earliest["devigged_probabilities"]["home"]) * 100.0, 2),
+        "draw": round((latest["devigged_probabilities"]["draw"] - earliest["devigged_probabilities"]["draw"]) * 100.0, 2),
+        "away": round((latest["devigged_probabilities"]["away"] - earliest["devigged_probabilities"]["away"]) * 100.0, 2),
+    }
+
+    ah_drift = None
+    if earliest["mkt_ah_line"] is not None and latest["mkt_ah_line"] is not None:
+        ah_drift = round(latest["mkt_ah_line"] - earliest["mkt_ah_line"], 4)
+
+    # Narrative steam description
+    desc_parts = [
+        f"时点跨度：从 {earliest['observed_at_utc']} 至 {latest['observed_at_utc']}（共 {len(raw_snapshots)} 次记录）。",
+        f"胜平负水位漂移：主胜赔率 {earliest['odds']['home']} -> {latest['odds']['home']}（去水胜率 {prob_drift['home']:+.2f} 个百分点）；"
+        f"平局 {earliest['odds']['draw']} -> {latest['odds']['draw']}（去水胜率 {prob_drift['draw']:+.2f} 个百分点）；"
+        f"客胜 {earliest['odds']['away']} -> {latest['odds']['away']}（去水胜率 {prob_drift['away']:+.2f} 个百分点）。",
+    ]
+    if ah_drift is not None:
+        if ah_drift != 0.0:
+            desc_parts.append(
+                f"让球线变动：从 {earliest['mkt_ah_line']} 变动至 {latest['mkt_ah_line']}（变动量 {ah_drift:+.2f}）。"
+            )
+        else:
+            desc_parts.append(f"让球线维持在 {latest['mkt_ah_line']} 未发生盘口移线。")
+    steam_description = " ".join(desc_parts)
+
+    return {
+        "available": True,
+        "snapshot_count": len(raw_snapshots),
+        "status": "multi_snapshot_trend",
+        "message": f"成功提取 {len(raw_snapshots)} 个时点快照，计算初盘至现盘的水位漂移与盘口变动趋势。",
+        "first_observed_utc": earliest["observed_at_utc"],
+        "latest_observed_utc": latest["observed_at_utc"],
+        "timeline": raw_snapshots,
+        "drift_summary": {
+            "earliest_odds": earliest["odds"],
+            "latest_odds": latest["odds"],
+            "odds_drift": odds_drift,
+            "earliest_devigged_probabilities": earliest["devigged_probabilities"],
+            "latest_devigged_probabilities": latest["devigged_probabilities"],
+            "prob_drift_percentage_points": prob_drift,
+            "ah_line_earliest": earliest["mkt_ah_line"],
+            "ah_line_latest": latest["mkt_ah_line"],
+            "ah_line_drift": ah_drift,
+            "steam_description": steam_description,
+        },
+    }
+
+
+_extract_market_odds_timeline = extract_market_odds_timeline
+
+
 def _m_open_history_readiness(
     eligible: pd.DataFrame,
     fit_ids: set[str],
@@ -769,6 +987,9 @@ def _build_result(
     fixture_source: Mapping[str, Any] | None = None,
     market: Mapping[str, Any] | None,
     market_source: Mapping[str, Any] | None,
+    divergence_threshold_pct_points: float = DEFAULT_DIVERGENCE_THRESHOLD_PCT_POINTS,
+    snapshot_root: str | Path | None = None,
+    market_input_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if mode not in {"research", "replay"}:
         raise SingleMatchError("mode must be 'research' or 'replay'")
@@ -931,20 +1152,105 @@ def _build_result(
             "elo_baseline": float(track_a.weight_elo),
         },
     }
+    timeline_analysis = None
+    if market is not None or market_input_path is not None:
+        timeline_analysis = extract_market_odds_timeline(
+            fixture=fixture,
+            report_root=snapshot_root,
+            market_input_path=market_input_path or (market_source.get("path") if market_source else None),
+        )
+
     market_result: dict[str, Any] = {
         "provided": market is not None,
         "input": dict(market) if market is not None else None,
+        "market_open_probabilities": (
+            {
+                "home": float(market["probabilities"]["home"]),
+                "draw": float(market["probabilities"]["draw"]),
+                "away": float(market["probabilities"]["away"]),
+            }
+            if market is not None
+            else None
+        ),
         "track_a_minus_market_percentage_points": None,
+        "value_edges": None,
+        "divergence_alerts": None,
+        "handicap_assessment": None,
         "m_open_available": m_open_available,
         "m_open_unavailable_reason": m_open_reason,
         "m_open_probabilities": m_open_probabilities,
         "m_open_selection": m_open_selection,
+        "timeline_analysis": timeline_analysis,
     }
     if market is not None:
-        market_result["track_a_minus_market_percentage_points"] = {
-            key: float((probabilities[index] - market["probabilities"][key]) * 100.0)
+        mkt_probs = market["probabilities"]
+        diff_pct = {
+            key: float((probabilities[index] - mkt_probs[key]) * 100.0)
             for index, key in enumerate(("home", "draw", "away"))
         }
+        market_result["track_a_minus_market_percentage_points"] = diff_pct
+
+        # Value Edges: Edge = P_track_a * Odds - 1
+        odds_values = {
+            "home": market["odds_open_h"],
+            "draw": market["odds_open_d"],
+            "away": market["odds_open_a"],
+        }
+        market_result["value_edges"] = {
+            key: round(float(probabilities[index] * odds_values[key] - 1.0), 4)
+            for index, key in enumerate(("home", "draw", "away"))
+        }
+        market_result["value_edges"]["disclaimer"] = (
+            "仅为模型估计胜率与市场赔率的乘积差值（Edge = P * Odds - 1），"
+            "模型未经真实盘口盲测检验，绝对不构成投注建议或未来收益保证。"
+        )
+
+        # Divergence Alerts
+        thresh = float(divergence_threshold_pct_points)
+        alerts: list[dict[str, Any]] = []
+        code_map = {"home": "H", "draw": "D", "away": "A"}
+        for index, key in enumerate(("home", "draw", "away")):
+            val_diff = diff_pct[key]
+            if abs(val_diff) >= thresh:
+                alerts.append(
+                    {
+                        "outcome": key,
+                        "outcome_label": OUTCOME_LABELS[code_map[key]],
+                        "model_prob_pct": round(float(probabilities[index] * 100.0), 4),
+                        "market_prob_pct": round(float(mkt_probs[key] * 100.0), 4),
+                        "diff_percentage_points": round(float(val_diff), 2),
+                        "direction": "高估" if val_diff > 0 else "低估",
+                        "note": (
+                            "模型基本面胜率与市场去水隐含胜率存在显著背离，"
+                            "提示可能存在模型基本面因子未计入的场外变量（如伤停、首发轮换、战意、更衣室等）。"
+                        ),
+                    }
+                )
+        market_result["divergence_alerts"] = {
+            "threshold_percentage_points": thresh,
+            "has_divergence": len(alerts) > 0,
+            "alerts": alerts,
+            "explanation": "背离预警仅客观标注模型与市场定价的统计分布差异，不代表任何一方必然正确。",
+        }
+
+        # Handicap Assessment
+        ah_line = market.get("mkt_ah_line")
+        if ah_line is not None:
+            try:
+                ah_val = float(ah_line)
+                if ah_val < 0:
+                    interp = f"主队让 {abs(ah_val):.2f} 球"
+                elif ah_val > 0:
+                    interp = f"客队让 {ah_val:.2f} 球（主队受让 {ah_val:.2f} 球）"
+                else:
+                    interp = "双方平手盘（0 球）"
+                market_result["handicap_assessment"] = {
+                    "mkt_ah_line": round(ah_val, 4),
+                    "interpretation": interp,
+                    "convention": "主队让球为负；例如 -0.25 表示主队让 0.25 球",
+                }
+            except (ValueError, TypeError):
+                market_result["handicap_assessment"] = None
 
     raw_features = {
         name: (float(query.iloc[0][name]) if pd.notna(query.iloc[0][name]) and math.isfinite(float(query.iloc[0][name])) else None)
@@ -1085,6 +1391,8 @@ def run_single_match_report(
     team_aliases_path: str | Path | None = None,
     market_input_path: str | Path | None = None,
     max_data_age_days: int = 30,
+    divergence_threshold_pct_points: float = DEFAULT_DIVERGENCE_THRESHOLD_PCT_POINTS,
+    snapshot_root: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Validate, fit, predict, render, and write the three single-match artifacts."""
 
@@ -1137,6 +1445,9 @@ def run_single_match_report(
         fixture_source=fixture_source,
         market=market,
         market_source=market_source,
+        divergence_threshold_pct_points=divergence_threshold_pct_points,
+        snapshot_root=snapshot_root,
+        market_input_path=market_input_path,
     )
 
     from .match_report import render_report_html, render_report_markdown
@@ -1159,11 +1470,14 @@ def run_single_match_report(
 
 
 __all__ = [
+    "DEFAULT_DIVERGENCE_THRESHOLD_PCT_POINTS",
     "MARKET_ALLOWED_FIELDS",
     "PENDING_FIXTURE_ALLOWED_COLUMNS",
     "SINGLE_MATCH_SCHEMA_VERSION",
     "SingleMatchError",
     "build_query_features",
+    "extract_market_odds_timeline",
+    "_extract_market_odds_timeline",
     "normalize_fixture",
     "parse_iso_date",
     "run_single_match_report",

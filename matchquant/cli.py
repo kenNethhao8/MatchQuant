@@ -187,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Structured JSON machine-readable adapter for host Agent orchestration.",
     )
     adapter_parser.add_argument(
-        "--action", choices=("setup", "sync", "readiness", "analyze", "followup"), default="analyze"
+        "--action", choices=("setup", "sync", "readiness", "analyze", "followup", "odds"), default="analyze"
     )
     adapter_parser.add_argument("--request-json", help="Direct JSON request payload string.")
     adapter_parser.add_argument("--request-file", help="Path to JSON request payload file.")

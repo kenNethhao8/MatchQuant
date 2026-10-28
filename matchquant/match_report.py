@@ -230,7 +230,7 @@ def render_report_markdown(report: Mapping[str, Any]) -> str:
     )
     if market["provided"]:
         market_input = market["input"]
-        market_probs = market_input["probabilities"]
+        market_probs = market.get("market_open_probabilities") or market_input["probabilities"]
         edge = market["track_a_minus_market_percentage_points"]
         lines.extend(
             [
@@ -238,6 +238,60 @@ def render_report_markdown(report: Mapping[str, Any]) -> str:
                 f"市场数据由用户提供，来源描述：{_md(market_input['source'])}；声明观测日 {_md(market_input['observed_at'])}（未独立核验）。Power 幂次法去水概率为主胜 {_pct(market_probs['home'])}、平局 {_pct(market_probs['draw'])}、客胜 {_pct(market_probs['away'])}。Track A 概率减去市场去水概率分别为 {_pp(edge['home'], signed=True)}、{_pp(edge['draw'], signed=True)}、{_pp(edge['away'], signed=True)}；这是概率差，不是已验证收益或未来 CLV。",
             ]
         )
+        if market.get("value_edges"):
+            ve = market["value_edges"]
+            lines.extend(
+                [
+                    "",
+                    f"价值偏差（Edge = P * Odds - 1）：主胜 {_num(ve.get('home'), 4)}、平局 {_num(ve.get('draw'), 4)}、客胜 {_num(ve.get('away'), 4)}。{_md(ve.get('disclaimer', ''))}",
+                ]
+            )
+        if market.get("divergence_alerts"):
+            da = market["divergence_alerts"]
+            thresh_str = _num(da.get("threshold_percentage_points"), 1)
+            if da.get("has_divergence"):
+                alert_notes = "；".join(
+                    f"{item['outcome_label']}（模型 {_pct(item['model_prob_pct']/100)} vs 市场 {_pct(item['market_prob_pct']/100)}，偏差 {_pp(item['diff_percentage_points'], signed=True)}）"
+                    for item in da.get("alerts", [])
+                )
+                lines.extend(
+                    [
+                        "",
+                        f"**显著背离预警（阈值 {thresh_str} 个百分点）：** 检测到模型胜率与市场隐含胜率存在显著分歧：{alert_notes}。{_md(da.get('alerts', [{}])[0].get('note', ''))}",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "",
+                        f"背离检验：各项赛果概率偏差均在阈值（{thresh_str} 个百分点）以内，未见显著背离。",
+                    ]
+                )
+        if market.get("handicap_assessment"):
+            ha = market["handicap_assessment"]
+            lines.extend(
+                [
+                    "",
+                    f"亚盘让球盘口：{ha['interpretation']}（盘口线值 {ha['mkt_ah_line']}；约定：{ha['convention']}）。",
+                ]
+            )
+        if market.get("timeline_analysis"):
+            ta = market["timeline_analysis"]
+            if ta.get("status") == "multi_snapshot_trend":
+                ds = ta.get("drift_summary", {})
+                lines.extend(
+                    [
+                        "",
+                        f"**盘口时序变动趋势（{ta.get('snapshot_count')} 个快照）：** {_md(ds.get('steam_description', ta.get('message', '')))}",
+                    ]
+                )
+            elif ta.get("status") == "single_snapshot_baseline":
+                lines.extend(
+                    [
+                        "",
+                        f"盘口时序趋势：{_md(ta.get('message', '暂无历史变动趋势，仅提供单时点截面对照。'))}",
+                    ]
+                )
         if market["m_open_available"]:
             m_open = market["m_open_probabilities"]
             lines.append(
@@ -322,18 +376,57 @@ def render_report_html(report: Mapping[str, Any]) -> str:
     limitations_html = "".join(f"<li>{_html(item)}</li>" for item in report["limitations"])
     if market["provided"]:
         market_input = market["input"]
-        market_probs = market_input["probabilities"]
+        market_probs = market.get("market_open_probabilities") or market_input["probabilities"]
         edge = market["track_a_minus_market_percentage_points"]
-        market_html = (
+        m_parts = [
             f"<p>市场数据由用户提供，来源描述：{_html(market_input['source'])}；声明观测日 {_html(market_input['observed_at'])}（未独立核验）。"
             f"Power 幂次法去水概率：主胜 {_pct(market_probs['home'])}、平局 {_pct(market_probs['draw'])}、客胜 {_pct(market_probs['away'])}。"
             f"Track A 减市场的概率差：主胜 {_pp(edge['home'], signed=True)}、平局 {_pp(edge['draw'], signed=True)}、客胜 {_pp(edge['away'], signed=True)}。</p>"
-        )
+        ]
+        if market.get("value_edges"):
+            ve = market["value_edges"]
+            m_parts.append(
+                f"<p><strong>价值偏差（Edge = P * Odds - 1）：</strong> 主胜 {_num(ve.get('home'), 4)}、平局 {_num(ve.get('draw'), 4)}、客胜 {_num(ve.get('away'), 4)}。<br>"
+                f"<small class='meta'>{_html(ve.get('disclaimer', ''))}</small></p>"
+            )
+        if market.get("divergence_alerts"):
+            da = market["divergence_alerts"]
+            thresh_str = _num(da.get("threshold_percentage_points"), 1)
+            if da.get("has_divergence"):
+                alert_notes = "；".join(
+                    f"{item['outcome_label']}（模型 {_pct(item['model_prob_pct']/100)} vs 市场 {_pct(item['market_prob_pct']/100)}，偏差 {_pp(item['diff_percentage_points'], signed=True)}）"
+                    for item in da.get("alerts", [])
+                )
+                m_parts.append(
+                    f"<p><strong>显著背离预警（阈值 {thresh_str} 个百分点）：</strong> 检测到模型胜率与市场隐含胜率存在显著分歧：{alert_notes}。<br>"
+                    f"<small class='meta'>{_html(da.get('alerts', [{}])[0].get('note', ''))}</small></p>"
+                )
+            else:
+                m_parts.append(
+                    f"<p><strong>背离检验：</strong> 各项赛果概率偏差均在阈值（{thresh_str} 个百分点）以内，未见显著背离。</p>"
+                )
+        if market.get("handicap_assessment"):
+            ha = market["handicap_assessment"]
+            m_parts.append(
+                f"<p><strong>亚盘让球盘口：</strong> {_html(ha['interpretation'])}（盘口线值 {_num(ha['mkt_ah_line'], 2)}；约定：{_html(ha['convention'])}）。</p>"
+            )
+        if market.get("timeline_analysis"):
+            ta = market["timeline_analysis"]
+            if ta.get("status") == "multi_snapshot_trend":
+                ds = ta.get("drift_summary", {})
+                m_parts.append(
+                    f"<p><strong>盘口时序变动趋势（{ta.get('snapshot_count')} 个快照）：</strong> {_html(ds.get('steam_description', ta.get('message', '')))}</p>"
+                )
+            elif ta.get("status") == "single_snapshot_baseline":
+                m_parts.append(
+                    f"<p><strong>盘口时序趋势：</strong> {_html(ta.get('message', '暂无历史变动趋势，仅提供单时点截面对照。'))}</p>"
+                )
         if market["m_open_available"]:
             m = market["m_open_probabilities"]
-            market_html += f"<p>M-Open 模型估计：主胜 {_pct(m['home'])}、平局 {_pct(m['draw'])}、客胜 {_pct(m['away'])}。</p>"
+            m_parts.append(f"<p>M-Open 模型估计：主胜 {_pct(m['home'])}、平局 {_pct(m['draw'])}、客胜 {_pct(m['away'])}。</p>")
         else:
-            market_html += f"<p>M-Open 未提供：{_html(market['m_open_unavailable_reason'])}</p>"
+            m_parts.append(f"<p>M-Open 未提供：{_html(market['m_open_unavailable_reason'])}</p>")
+        market_html = "".join(m_parts)
     else:
         market_html = "<p>未提供赛前赔率，未计算市场对照。</p>"
 
