@@ -1,12 +1,14 @@
 """Tests for Layer 4: Agent Adapter, Skill installation, and 2027 scenario (T6, T7, T8, T12, T13, T15)."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -30,6 +32,14 @@ def _make_rich_csv_for_season(season: str, match_count: int = 380, start_date: d
 
 
 class AdapterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        sandbox = tempfile.TemporaryDirectory()
+        self.addCleanup(sandbox.cleanup)
+        self.default_profile_path = Path(sandbox.name) / "default_profile.json"
+        environment = patch.dict(os.environ, {"MATCHQUANT_PROFILE_PATH": str(self.default_profile_path)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_t12_adapter_setup_and_readiness_actions(self) -> None:
         """T12: Adapter setup and readiness return structured responses with alias resolution."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -46,6 +56,9 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(setup_res["status"], "ok")
             self.assertEqual(setup_res["action"], "setup")
             self.assertTrue(setup_res["profile"]["refresh_policy"]["auto_refresh"])
+            self.assertEqual(Path(setup_res["saved_profile_path"]), p_path)
+            self.assertTrue(json.loads(p_path.read_text(encoding="utf-8"))["refresh_policy"]["auto_refresh"])
+            self.assertFalse(self.default_profile_path.exists())
 
             # 2. Readiness action with alias resolution
             readiness_res = execute_adapter_request({
@@ -215,8 +228,10 @@ class AdapterTests(unittest.TestCase):
             env = dict(os.environ)
             worktree_dir = str(Path(__file__).resolve().parent.parent)
             env["PYTHONPATH"] = worktree_dir
+            env["PYTHONIOENCODING"] = "utf-8"
             completed = subprocess.run(
-                cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=15
+                cmd, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, env=env, timeout=15
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             out_json = json.loads(completed.stdout)

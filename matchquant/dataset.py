@@ -146,7 +146,7 @@ def build_dataset_from_manifest(
 
     combined_can = pd.concat(canonical_frames, ignore_index=True)
     combined_can = validate_matches(combined_can)
-    combined_can = combined_can.sort_values(["date", "match_id"], kind="mergesort").reset_index(drop=True)
+    combined_can = combined_can.sort_values(["date", "match_id"], kind="mergesort").loc[:, CANONICAL_COLUMNS].reset_index(drop=True)
     can_path.parent.mkdir(parents=True, exist_ok=True)
     combined_can.to_csv(can_path, index=False, encoding="utf-8")
     can_hash = file_sha256(can_path)
